@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -e
+
+/usr/local/bin/fix-docker-sock-perms
+
+if [[ "$#" -eq 0 ]]; then
+        exec /bin/bash
+fi
+
+exec "$@"
