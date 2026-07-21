@@ -45,7 +45,7 @@ def home(request: Request) -> HTMLResponse | RedirectResponse:
     if not is_authenticated(request):
         return RedirectResponse(url="/login", status_code=303)
 
-        return templates.TemplateResponse(request=request, name="home.html")
+    return templates.TemplateResponse(request=request, name="home.html")
 
 
 @app.get("/login", response_class=HTMLResponse, response_model=None)
