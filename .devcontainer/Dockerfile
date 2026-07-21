@@ -16,6 +16,7 @@ RUN apt-get update \
         python3 \
         python3-pip \
         python-is-python3 \
+        rg \
         ssh \
         sudo \
         wget \
@@ -101,7 +102,9 @@ USER ${USERNAME}
 RUN python -m pip install --break-system-packages --user \
   duckdb \
   ipykernel \
-  requests
+  requests \
+  fastapi \
+  uvicorn[standard]
 
 # install duckdb command line interface
 RUN cd /home/${USERNAME} && curl https://install.duckdb.org | sh
@@ -110,11 +113,6 @@ RUN grep -qxF 'export PATH="/home/${USERNAME}/.duckdb/cli/latest:$PATH"' /home/$
     || echo 'export PATH="/home/${USERNAME}/.duckdb/cli/latest:$PATH"' >> /home/${USERNAME}/.profile
 
 # lz-devcontainer
-
-USER ${USERNAME}
-
-RUN python -m pip install --break-system-packages --user \
-  fastapi
 
 USER root
 ENTRYPOINT ["/usr/local/bin/devcontainer-entrypoint"]
