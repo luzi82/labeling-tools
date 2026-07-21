@@ -1,0 +1,5 @@
+fastapi
+uvicorn[standard]
+itsdangerous
+pyyaml
+python-multipart
