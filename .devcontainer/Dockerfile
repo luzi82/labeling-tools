@@ -26,9 +26,72 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --chown=root:root --chmod=0755 .devcontainer/fix-docker-sock-perms /usr/local/bin/fix-docker-sock-perms
-COPY --chown=root:root --chmod=0440 .devcontainer/fix-docker-sock-perms.sudoers /etc/sudoers.d/fix-docker-sock-perms
-COPY --chown=root:root --chmod=0755 .devcontainer/devcontainer-entrypoint /usr/local/bin/devcontainer-entrypoint
+RUN cat > /usr/local/bin/fix-docker-sock-perms <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+socket_path="${DOCKER_HOST_SOCKET:-/var/run/docker-host.sock}"
+if [[ ! -S "${socket_path}" ]]; then
+    socket_path="/var/run/docker.sock"
+fi
+
+if [[ ! -S "${socket_path}" ]]; then
+    exit 0
+fi
+
+socket_gid="$(stat -c '%g' "${socket_path}")"
+
+if getent group docker >/dev/null; then
+    docker_gid="$(getent group docker | cut -d: -f3)"
+    if [[ "${docker_gid}" != "${socket_gid}" ]]; then
+        if getent group "${socket_gid}" >/dev/null; then
+            docker_group="$(getent group "${socket_gid}" | cut -d: -f1)"
+        else
+            groupmod --gid "${socket_gid}" docker
+            docker_group="docker"
+        fi
+    else
+        docker_group="docker"
+    fi
+else
+    if getent group "${socket_gid}" >/dev/null; then
+        docker_group="$(getent group "${socket_gid}" | cut -d: -f1)"
+    else
+        groupadd --gid "${socket_gid}" docker
+        docker_group="docker"
+    fi
+fi
+
+usermod -aG "${docker_group}" vscode
+setfacl -m u:vscode:rw "${socket_path}"
+EOF
+
+RUN truncate -s -1 /usr/local/bin/fix-docker-sock-perms
+
+RUN chmod 0755 /usr/local/bin/fix-docker-sock-perms
+
+RUN cat > /etc/sudoers.d/fix-docker-sock-perms <<'EOF'
+vscode ALL=(root) NOPASSWD: /usr/local/bin/fix-docker-sock-perms
+EOF
+
+RUN chmod 0440 /etc/sudoers.d/fix-docker-sock-perms
+
+RUN cat > /usr/local/bin/devcontainer-entrypoint <<'EOF'
+#!/usr/bin/env bash
+set -e
+
+/usr/local/bin/fix-docker-sock-perms
+
+if [[ "$#" -eq 0 ]]; then
+                exec /bin/bash
+fi
+
+exec "$@"
+EOF
+
+RUN truncate -s -1 /usr/local/bin/devcontainer-entrypoint
+
+RUN chmod 0755 /usr/local/bin/devcontainer-entrypoint
 
 RUN echo "root:root" | chpasswd
 RUN echo "${USERNAME}:${USERNAME}" | chpasswd
@@ -45,6 +108,8 @@ RUN cd /home/${USERNAME} && curl https://install.duckdb.org | sh
 
 RUN grep -qxF 'export PATH="/home/${USERNAME}/.duckdb/cli/latest:$PATH"' /home/${USERNAME}/.profile \
     || echo 'export PATH="/home/${USERNAME}/.duckdb/cli/latest:$PATH"' >> /home/${USERNAME}/.profile
+
+# lz-devcontainer
 
 USER root
 ENTRYPOINT ["/usr/local/bin/devcontainer-entrypoint"]

@@ -1,1 +1,0 @@
-vscode ALL=(root) NOPASSWD: /usr/local/bin/fix-docker-sock-perms

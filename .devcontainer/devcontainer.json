@@ -1,40 +1,41 @@
 {
-  "name": "Labeling Tools (Debian)",
+  "name": "lz-devcontainer",
+  "runArgs": ["--hostname", "dev"],
   "build": {
     "dockerfile": "Dockerfile",
-		"context": ".."
+    "context": ".."
   },
 
   "features": {
     "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
-			"version": "latest",
-			"moby": false
+      "version": "latest",
+      "moby": false
     }
   },
 
-	"customizations": {
-		"vscode": {
-			"extensions": [
-				"ms-python.python",
-				"ms-toolsai.jupyter",
-				"mechatroner.rainbow-csv"
-			]
-		}
-	},
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-toolsai.jupyter",
+        "mechatroner.rainbow-csv"
+      ]
+    }
+  },
 
-	"initializeCommand": "mkdir -p ${localWorkspaceFolder}/tmp/devcontainer_fs/home/vscode/.cache",
-	"postStartCommand": "sudo /usr/local/bin/fix-docker-sock-perms",
+  "initializeCommand": "mkdir -p ${localWorkspaceFolder}/tmp/devcontainer_fs/home/vscode/.cache",
+  "postStartCommand": "sudo /usr/local/bin/fix-docker-sock-perms",
 
-	"mounts": [
+  "mounts": [
     "source=/mnt/luzi82/88_luzi82_ro,target=/mnt/luzi82/88_luzi82_ro,type=bind,consistency=cached,readonly",
     "source=/mnt/luzi82/88_lzsmz_ro,target=/mnt/luzi82/88_lzsmz_ro,type=bind,consistency=cached,readonly",
-    "source=/mnt/luzi82/88_luzi82_rw/project/gentouman_poc,target=/mnt/luzi82/88_luzi82_rw/project/gentouman_poc,type=bind,consistency=cached",
-		"source=${localWorkspaceFolder}/tmp/devcontainer_fs/home/vscode/.cache,target=/home/vscode/.cache,type=bind,consistency=cached"
+    // "source=/mnt/luzi82/88_luzi82_rw/project,target=/mnt/luzi82/88_luzi82_rw/project,type=bind,consistency=cached",
+    "source=${localWorkspaceFolder}/tmp/devcontainer_fs/home/vscode/.cache,target=/home/vscode/.cache,type=bind,consistency=cached"
   ],
 
   "containerEnv": {
-		"PROJECT_ROOT": "${containerWorkspaceFolder}"
-	},
+    "PROJECT_ROOT": "${containerWorkspaceFolder}"
+  },
 
   "remoteUser": "vscode"
 }
