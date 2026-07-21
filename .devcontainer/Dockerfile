@@ -15,8 +15,9 @@ RUN apt-get update \
         nano \
         python3 \
         python3-pip \
+        python3-venv \
         python-is-python3 \
-        rg \
+        ripgrep \
         ssh \
         sudo \
         wget \
@@ -26,6 +27,12 @@ RUN apt-get update \
     && chmod 0440 "/etc/sudoers.d/${USERNAME}" \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+
+RUN python3 -m venv "${VIRTUAL_ENV}" \
+    && chown -R "${USERNAME}:${USERNAME}" "${VIRTUAL_ENV}"
 
 RUN cat > /usr/local/bin/fix-docker-sock-perms <<'EOF'
 #!/usr/bin/env bash
@@ -99,12 +106,10 @@ RUN echo "${USERNAME}:${USERNAME}" | chpasswd
 
 USER ${USERNAME}
 
-RUN python -m pip install --break-system-packages --user \
+RUN pip install --no-cache-dir \
   duckdb \
   ipykernel \
-  requests \
-  fastapi \
-  uvicorn[standard]
+  requests
 
 # install duckdb command line interface
 RUN cd /home/${USERNAME} && curl https://install.duckdb.org | sh
@@ -113,6 +118,10 @@ RUN grep -qxF 'export PATH="/home/${USERNAME}/.duckdb/cli/latest:$PATH"' /home/$
     || echo 'export PATH="/home/${USERNAME}/.duckdb/cli/latest:$PATH"' >> /home/${USERNAME}/.profile
 
 # lz-devcontainer
+
+COPY --chown=${USERNAME}:${USERNAME} requirements.txt /tmp/requirements.txt
+
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 USER root
 ENTRYPOINT ["/usr/local/bin/devcontainer-entrypoint"]
