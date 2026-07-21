@@ -111,5 +111,10 @@ RUN grep -qxF 'export PATH="/home/${USERNAME}/.duckdb/cli/latest:$PATH"' /home/$
 
 # lz-devcontainer
 
+USER ${USERNAME}
+
+RUN python -m pip install --break-system-packages --user \
+  fastapi
+
 USER root
 ENTRYPOINT ["/usr/local/bin/devcontainer-entrypoint"]
