@@ -33,7 +33,13 @@
       font-weight: bold;
     }
 
-    .menu-panel form {
+    .menu-panel__actions {
+      display: grid;
+      gap: .75rem;
+      margin-top: 2rem;
+    }
+
+    .menu-panel__logout {
       margin-top: auto;
     }
 
@@ -56,15 +62,95 @@
       background-size: 24px 24px;
       min-height: 100vh;
     }
+
+    dialog {
+      background: #fffdf8;
+      border: 1px solid #cbd7cc;
+      border-radius: 8px;
+      box-shadow: 0 12px 30px #17261d1c;
+      box-sizing: border-box;
+      color: #17261d;
+      font-family: Georgia, serif;
+      padding: 1.5rem;
+      width: min(100% - 2rem, 28rem);
+    }
+
+    dialog::backdrop {
+      background: #17261d52;
+    }
+
+    dialog h2 {
+      font-size: 1.35rem;
+      margin: 0 0 1.5rem;
+    }
+
+    dialog label {
+      display: block;
+      font-weight: bold;
+      margin-bottom: .5rem;
+    }
+
+    dialog input {
+      border: 1px solid #879b89;
+      border-radius: 4px;
+      box-sizing: border-box;
+      font: inherit;
+      padding: .6rem;
+      width: 100%;
+    }
+
+    .dialog-actions {
+      display: flex;
+      gap: .75rem;
+      justify-content: end;
+      margin-top: 1.5rem;
+    }
+
+    .dialog-actions button {
+      background: none;
+      border: 1px solid #1e6245;
+      border-radius: 4px;
+      color: #1e6245;
+      cursor: pointer;
+      font: inherit;
+      padding: .5rem .9rem;
+    }
+
+    .dialog-actions button[type="submit"] {
+      background: #1e6245;
+      color: #fff;
+    }
   </style>
 </head>
 <body>
   <aside class="menu-panel" aria-label="Application menu">
     <span class="menu-panel__title">Labeling Tools</span>
-    <form action="/logout" method="post">
+    <div class="menu-panel__actions">
+      <button id="import-images-button" type="button">Import images</button>
+    </div>
+    <form class="menu-panel__logout" action="/logout" method="post">
       <button type="submit">Log out</button>
     </form>
   </aside>
   <main class="grid-space" aria-label="Workspace"></main>
+  <dialog id="import-images-dialog" aria-labelledby="import-images-title">
+    <form method="dialog">
+      <h2 id="import-images-title">Import images</h2>
+      <label for="image-path">Path</label>
+      <input autofocus id="image-path" name="path" required type="text">
+      <div class="dialog-actions">
+        <button type="button" data-dialog-cancel>Cancel</button>
+        <button type="submit">OK</button>
+      </div>
+    </form>
+  </dialog>
+  <script>
+    const importImagesButton = document.querySelector("#import-images-button");
+    const importImagesDialog = document.querySelector("#import-images-dialog");
+    const cancelImportButton = document.querySelector("[data-dialog-cancel]");
+
+    importImagesButton.addEventListener("click", () => importImagesDialog.showModal());
+    cancelImportButton.addEventListener("click", () => importImagesDialog.close());
+  </script>
 </body>
 </html>
