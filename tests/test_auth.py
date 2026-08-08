@@ -24,6 +24,8 @@ class AuthenticationTests(unittest.TestCase):
         self.assertEqual(login_response.status_code, 303)
         self.assertEqual(login_response.headers["location"], "/")
         self.assertEqual(response.status_code, 200)
+        self.assertIn('class="menu-panel"', response.text)
+        self.assertIn('action="/logout"', response.text)
         self.assertIn('class="grid-space"', response.text)
 
 
