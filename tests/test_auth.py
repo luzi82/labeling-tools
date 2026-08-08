@@ -24,7 +24,7 @@ class AuthenticationTests(unittest.TestCase):
         self.assertEqual(login_response.status_code, 303)
         self.assertEqual(login_response.headers["location"], "/")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("<h2>Workspace</h2>", response.text)
+        self.assertIn('class="grid-space"', response.text)
 
 
 if __name__ == "__main__":
