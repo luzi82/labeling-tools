@@ -12,17 +12,17 @@ from starlette.templating import Jinja2Templates
 
 
 def load_config() -> dict[str, str]:
-        config_path = Path(__file__).with_name("config.yaml")
-        with config_path.open(encoding="utf-8") as config_file:
-                config = yaml.safe_load(config_file)
+  config_path = Path(__file__).with_name("config.yaml")
+  with config_path.open(encoding="utf-8") as config_file:
+    config = yaml.safe_load(config_file)
 
-        if not isinstance(config, dict) or not all(
-                isinstance(config.get(key), str) and config[key]
-                for key in ("password", "session_secret")
-        ):
-                raise RuntimeError("config.yaml must define non-empty password and session_secret values")
+  if not isinstance(config, dict) or not all(
+    isinstance(config.get(key), str) and config[key]
+    for key in ("password", "session_secret")
+  ):
+    raise RuntimeError("config.yaml must define non-empty password and session_secret values")
 
-        return config
+  return config
 
 
 config = load_config()
@@ -32,46 +32,46 @@ templates = Jinja2Templates(directory=Path(__file__).with_name("templates"))
 
 
 def is_authenticated(request: Request) -> bool:
-        return request.session.get("authenticated") is True
+  return request.session.get("authenticated") is True
 
 
 @app.get("/health")
 def health_check() -> dict[str, str]:
-    return {"status": "ok"}
+  return {"status": "ok"}
 
 
 @app.get("/", response_class=HTMLResponse, response_model=None)
 def home(request: Request) -> HTMLResponse | RedirectResponse:
-    if not is_authenticated(request):
-        return RedirectResponse(url="/login", status_code=303)
+  if not is_authenticated(request):
+    return RedirectResponse(url="/login", status_code=303)
 
-    return templates.TemplateResponse(request=request, name="home.html")
+  return templates.TemplateResponse(request=request, name="home.html")
 
 
 @app.get("/login", response_class=HTMLResponse, response_model=None)
 def login(request: Request, error: bool = False) -> HTMLResponse | RedirectResponse:
-    if is_authenticated(request):
-        return RedirectResponse(url="/", status_code=303)
-    return templates.TemplateResponse(
-        request=request,
-        name="login.html",
-        context={"error": error},
-    )
+  if is_authenticated(request):
+    return RedirectResponse(url="/", status_code=303)
+  return templates.TemplateResponse(
+    request=request,
+    name="login.html",
+    context={"error": error},
+  )
 
 
 @app.post("/login")
 def authenticate(request: Request, password: str = Form()) -> RedirectResponse:
-    if compare_digest(password, config["password"]):
-        request.session["authenticated"] = True
-        return RedirectResponse(url="/", status_code=303)
-    return RedirectResponse(url="/login?error=1", status_code=303)
+  if compare_digest(password, config["password"]):
+    request.session["authenticated"] = True
+    return RedirectResponse(url="/", status_code=303)
+  return RedirectResponse(url="/login?error=1", status_code=303)
 
 
 @app.post("/logout")
 def logout(request: Request) -> RedirectResponse:
-    request.session.clear()
-    return RedirectResponse(url="/login", status_code=303)
+  request.session.clear()
+  return RedirectResponse(url="/login", status_code=303)
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+  uvicorn.run(app, host="0.0.0.0", port=8000)
