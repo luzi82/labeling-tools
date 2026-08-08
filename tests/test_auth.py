@@ -27,8 +27,9 @@ class AuthenticationTests(unittest.TestCase):
         self.assertIn('class="menu-panel"', response.text)
         self.assertIn('action="/logout"', response.text)
         self.assertIn('class="grid-space"', response.text)
-        self.assertIn('id="import-images-button"', response.text)
-        self.assertIn('id="import-images-dialog"', response.text)
+        self.assertIn('id="add-images-path-button"', response.text)
+        self.assertIn("Add images path", response.text)
+        self.assertIn('id="add-images-path-dialog"', response.text)
         self.assertIn('for="image-path">Path</label>', response.text)
         self.assertIn('for="image-label">Label</label>', response.text)
 

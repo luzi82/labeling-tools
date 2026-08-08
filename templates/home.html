@@ -126,16 +126,16 @@
   <aside class="menu-panel" aria-label="Application menu">
     <span class="menu-panel__title">Labeling Tools</span>
     <div class="menu-panel__actions">
-      <button id="import-images-button" type="button">Import images</button>
+      <button id="add-images-path-button" type="button">Add images path</button>
     </div>
     <form class="menu-panel__logout" action="/logout" method="post">
       <button type="submit">Log out</button>
     </form>
   </aside>
   <main class="grid-space" aria-label="Workspace"></main>
-  <dialog id="import-images-dialog" aria-labelledby="import-images-title">
+  <dialog id="add-images-path-dialog" aria-labelledby="add-images-path-title">
     <form method="dialog">
-      <h2 id="import-images-title">Import images</h2>
+      <h2 id="add-images-path-title">Add images path</h2>
       <label for="image-label">Label</label>
       <input autofocus id="image-label" name="label" required type="text">
       <label for="image-path">Path</label>
@@ -147,12 +147,12 @@
     </form>
   </dialog>
   <script>
-    const importImagesButton = document.querySelector("#import-images-button");
-    const importImagesDialog = document.querySelector("#import-images-dialog");
+    const addImagesPathButton = document.querySelector("#add-images-path-button");
+    const addImagesPathDialog = document.querySelector("#add-images-path-dialog");
     const cancelImportButton = document.querySelector("[data-dialog-cancel]");
 
-    importImagesButton.addEventListener("click", () => importImagesDialog.showModal());
-    cancelImportButton.addEventListener("click", () => importImagesDialog.close());
+    addImagesPathButton.addEventListener("click", () => addImagesPathDialog.showModal());
+    cancelImportButton.addEventListener("click", () => addImagesPathDialog.close());
   </script>
 </body>
 </html>
