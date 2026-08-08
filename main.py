@@ -49,7 +49,7 @@ def health_check() -> dict[str, str]:
 
 
 @protected_pages.get("/", response_class=HTMLResponse, response_model=None)
-def home(request: Request) -> HTMLResponse | RedirectResponse:
+def home(request: Request) -> HTMLResponse | RedirectResponse                                                                                                                                                                                                                                             sponse:
   return templates.TemplateResponse(request=request, name="home.html")
 
 
