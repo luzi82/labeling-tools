@@ -136,8 +136,10 @@
   <dialog id="import-images-dialog" aria-labelledby="import-images-title">
     <form method="dialog">
       <h2 id="import-images-title">Import images</h2>
+      <label for="image-label">Label</label>
+      <input autofocus id="image-label" name="label" required type="text">
       <label for="image-path">Path</label>
-      <input autofocus id="image-path" name="path" required type="text">
+      <input id="image-path" name="path" required type="text">
       <div class="dialog-actions">
         <button type="button" data-dialog-cancel>Cancel</button>
         <button type="submit">OK</button>

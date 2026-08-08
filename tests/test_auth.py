@@ -30,6 +30,7 @@ class AuthenticationTests(unittest.TestCase):
         self.assertIn('id="import-images-button"', response.text)
         self.assertIn('id="import-images-dialog"', response.text)
         self.assertIn('for="image-path">Path</label>', response.text)
+        self.assertIn('for="image-label">Label</label>', response.text)
 
 
 if __name__ == "__main__":
