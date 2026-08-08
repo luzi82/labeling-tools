@@ -7,6 +7,7 @@ import uvicorn
 import yaml
 from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from home import router as home_router
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.templating import Jinja2Templates
 
@@ -48,11 +49,6 @@ def health_check() -> dict[str, str]:
   return {"status": "ok"}
 
 
-@protected_pages.get("/", response_class=HTMLResponse, response_model=None)
-def home(request: Request) -> HTMLResponse | RedirectResponse:
-  return templates.TemplateResponse(request=request, name="home.html")
-
-
 @app.get("/login", response_class=HTMLResponse, response_model=None)
 def login(request: Request, error: bool = False) -> HTMLResponse | RedirectResponse:
   if is_authenticated(request):
@@ -78,6 +74,7 @@ def logout(request: Request) -> RedirectResponse:
   return RedirectResponse(url="/login", status_code=303)
 
 
+protected_pages.include_router(home_router)
 app.include_router(protected_pages)
 
 
