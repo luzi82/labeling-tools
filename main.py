@@ -5,7 +5,7 @@ from secrets import compare_digest
 
 import uvicorn
 import yaml
-from fastapi import FastAPI, Form, Request
+from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.templating import Jinja2Templates
@@ -35,16 +35,21 @@ def is_authenticated(request: Request) -> bool:
   return request.session.get("authenticated") is True
 
 
+def require_authentication(request: Request) -> None:
+  if not is_authenticated(request):
+    raise HTTPException(status_code=303, headers={"Location": "/login"})
+
+
+protected_pages = APIRouter(dependencies=[Depends(require_authentication)])
+
+
 @app.get("/health")
 def health_check() -> dict[str, str]:
   return {"status": "ok"}
 
 
-@app.get("/", response_class=HTMLResponse, response_model=None)
+@protected_pages.get("/", response_class=HTMLResponse, response_model=None)
 def home(request: Request) -> HTMLResponse | RedirectResponse:
-  if not is_authenticated(request):
-    return RedirectResponse(url="/login", status_code=303)
-
   return templates.TemplateResponse(request=request, name="home.html")
 
 
@@ -71,6 +76,9 @@ def authenticate(request: Request, password: str = Form()) -> RedirectResponse:
 def logout(request: Request) -> RedirectResponse:
   request.session.clear()
   return RedirectResponse(url="/login", status_code=303)
+
+
+app.include_router(protected_pages)
 
 
 if __name__ == "__main__":
