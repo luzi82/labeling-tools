@@ -60,6 +60,7 @@
         linear-gradient(#d8e2da 1px, transparent 1px),
         linear-gradient(90deg, #d8e2da 1px, transparent 1px);
       background-size: 24px 24px;
+      cursor: grab;
       overflow: hidden;
       position: relative;
       min-height: 100vh;
@@ -83,6 +84,10 @@
     }
 
     .folder-tile:active {
+      cursor: grabbing;
+    }
+
+    .grid-space.is-panning {
       cursor: grabbing;
     }
 
@@ -205,6 +210,8 @@
     const cancelImportButton = document.querySelector("[data-dialog-cancel]");
     const addImagesPathForm = addImagesPathDialog.querySelector("form");
     const workspace = document.querySelector(".grid-space");
+    let workspaceOffsetX = 0;
+    let workspaceOffsetY = 0;
 
     addImagesPathButton.addEventListener("click", () => addImagesPathDialog.showModal());
     cancelImportButton.addEventListener("click", () => addImagesPathDialog.close());
@@ -233,6 +240,7 @@
     workspace.addEventListener("pointerdown", (event) => {
       const folderTile = event.target.closest(".folder-tile");
       if (!folderTile) {
+        panWorkspace(event);
         return;
       }
 
@@ -261,6 +269,38 @@
         folderTile.removeEventListener("pointermove", moveFolderTile);
       }
     });
+
+    function panWorkspace(event) {
+      let previousClientX = event.clientX;
+      let previousClientY = event.clientY;
+
+      workspace.classList.add("is-panning");
+      workspace.setPointerCapture(event.pointerId);
+      workspace.addEventListener("pointermove", moveWorkspace);
+      workspace.addEventListener("pointerup", stopPanningWorkspace, { once: true });
+      workspace.addEventListener("pointercancel", stopPanningWorkspace, { once: true });
+
+      function moveWorkspace(moveEvent) {
+        const deltaX = moveEvent.clientX - previousClientX;
+        const deltaY = moveEvent.clientY - previousClientY;
+
+        workspaceOffsetX += deltaX;
+        workspaceOffsetY += deltaY;
+        workspace.style.backgroundPosition = `${workspaceOffsetX}px ${workspaceOffsetY}px`;
+        workspace.querySelectorAll(".folder-tile").forEach((tile) => {
+          tile.style.left = `${tile.offsetLeft + deltaX}px`;
+          tile.style.top = `${tile.offsetTop + deltaY}px`;
+        });
+        previousClientX = moveEvent.clientX;
+        previousClientY = moveEvent.clientY;
+      }
+
+      function stopPanningWorkspace(stopEvent) {
+        workspace.classList.remove("is-panning");
+        workspace.releasePointerCapture(stopEvent.pointerId);
+        workspace.removeEventListener("pointermove", moveWorkspace);
+      }
+    }
   </script>
 </body>
 </html>
