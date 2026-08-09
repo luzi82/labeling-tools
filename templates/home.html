@@ -184,20 +184,20 @@
   <aside class="menu-panel" aria-label="Application menu">
     <span class="menu-panel__title">Labeling Tools</span>
     <div class="menu-panel__actions">
-      <button id="add-images-path-button" type="button">Add images path</button>
+      <button id="add-images-folder-button" type="button">Add images folder</button>
     </div>
     <form class="menu-panel__logout" action="/logout" method="post">
       <button type="submit">Log out</button>
     </form>
   </aside>
   <main class="grid-space" aria-label="Workspace"></main>
-  <dialog id="add-images-path-dialog" aria-labelledby="add-images-path-title">
+  <dialog id="add-images-folder-dialog" aria-labelledby="add-images-folder-title">
     <form method="dialog">
-      <h2 id="add-images-path-title">Add images path</h2>
+      <h2 id="add-images-folder-title">Add images folder</h2>
       <label for="image-label">Label</label>
       <input autofocus id="image-label" name="label" required type="text">
-      <label for="image-path">Path</label>
-      <input id="image-path" name="path" required type="text">
+      <label for="image-folder-path">Path</label>
+      <input id="image-folder-path" name="path" required type="text">
       <div class="dialog-actions">
         <button type="button" data-dialog-cancel>Cancel</button>
         <button type="submit">OK</button>
@@ -205,22 +205,22 @@
     </form>
   </dialog>
   <script>
-    const addImagesPathButton = document.querySelector("#add-images-path-button");
-    const addImagesPathDialog = document.querySelector("#add-images-path-dialog");
+    const addImagesFolderButton = document.querySelector("#add-images-folder-button");
+    const addImagesFolderDialog = document.querySelector("#add-images-folder-dialog");
     const cancelImportButton = document.querySelector("[data-dialog-cancel]");
-    const addImagesPathForm = addImagesPathDialog.querySelector("form");
+    const addImagesFolderForm = addImagesFolderDialog.querySelector("form");
     const workspace = document.querySelector(".grid-space");
     let workspaceOffsetX = 0;
     let workspaceOffsetY = 0;
 
-    addImagesPathButton.addEventListener("click", () => addImagesPathDialog.showModal());
-    cancelImportButton.addEventListener("click", () => addImagesPathDialog.close());
-    addImagesPathForm.addEventListener("submit", () => {
+    addImagesFolderButton.addEventListener("click", () => addImagesFolderDialog.showModal());
+    cancelImportButton.addEventListener("click", () => addImagesFolderDialog.close());
+    addImagesFolderForm.addEventListener("submit", () => {
       const folderTile = document.createElement("div");
       const folderIcon = document.createElement("span");
       const folderLabel = document.createElement("span");
-      const labelInput = addImagesPathForm.elements.label;
-      const pathInput = addImagesPathForm.elements.path;
+      const labelInput = addImagesFolderForm.elements.label;
+      const pathInput = addImagesFolderForm.elements.path;
 
       folderTile.className = "folder-tile";
       folderTile.dataset.path = pathInput.value;
@@ -234,7 +234,7 @@
       folderLabel.textContent = labelInput.value;
       folderTile.append(folderIcon, folderLabel);
       workspace.append(folderTile);
-      addImagesPathForm.reset();
+      addImagesFolderForm.reset();
     });
 
     workspace.addEventListener("pointerdown", (event) => {
