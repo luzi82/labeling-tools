@@ -1,8 +1,10 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from fastapi.testclient import TestClient
 
-from main import app, config
+from main import app, config, parse_startup_arguments
 
 
 class AuthenticationTests(unittest.TestCase):
@@ -35,6 +37,16 @@ class AuthenticationTests(unittest.TestCase):
         self.assertIn('class="grid-space"', response.text)
         self.assertIn('className = "folder-tile"', response.text)
         self.assertIn("function panWorkspace", response.text)
+
+    def test_working_folder_argument_resolves_directory(self) -> None:
+        with TemporaryDirectory() as directory:
+            working_folder = Path(directory) / "new" / "workspace"
+            arguments = parse_startup_arguments(
+                ["--working-folder", str(working_folder)]
+            )
+
+            self.assertTrue(working_folder.is_dir())
+            self.assertEqual(arguments.working_folder, working_folder.resolve())
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import argparse
+import os
 from pathlib import Path
 from secrets import compare_digest
 
@@ -44,6 +46,22 @@ def require_authentication(request: Request) -> None:
 protected_pages = APIRouter(dependencies=[Depends(require_authentication)])
 
 
+def parse_startup_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
+  parser = argparse.ArgumentParser()
+  parser.add_argument(
+    "--working-folder",
+    default=Path.cwd(),
+    help="Directory used as the process working folder, created if missing (default: current directory).",
+  )
+  options = parser.parse_args(arguments)
+  working_folder = Path(options.working_folder).expanduser().resolve()
+  working_folder.mkdir(parents=True, exist_ok=True)
+  if not working_folder.is_dir():
+    parser.error(f"--working-folder must be a directory: {working_folder}")
+  options.working_folder = working_folder
+  return options
+
+
 @app.get("/health")
 def health_check() -> dict[str, str]:
   return {"status": "ok"}
@@ -79,4 +97,6 @@ app.include_router(protected_pages)
 
 
 if __name__ == "__main__":
+  startup_arguments = parse_startup_arguments()
+  os.chdir(startup_arguments.working_folder)
   uvicorn.run(app, host="0.0.0.0", port=8000)
