@@ -60,7 +60,60 @@
         linear-gradient(#d8e2da 1px, transparent 1px),
         linear-gradient(90deg, #d8e2da 1px, transparent 1px);
       background-size: 24px 24px;
+      overflow: hidden;
+      position: relative;
       min-height: 100vh;
+    }
+
+    .folder-tile {
+      align-items: center;
+      background: #fffdf8;
+      border: 1px solid #879b89;
+      border-radius: 4px;
+      box-shadow: 0 3px 8px #17261d1c;
+      box-sizing: border-box;
+      cursor: grab;
+      display: grid;
+      gap: .5rem;
+      justify-items: center;
+      padding: .65rem;
+      position: absolute;
+      touch-action: none;
+      width: 7rem;
+    }
+
+    .folder-tile:active {
+      cursor: grabbing;
+    }
+
+    .folder-tile__icon {
+      background: #d6ad39;
+      border: 1px solid #906d15;
+      border-radius: 2px;
+      height: 2.25rem;
+      position: relative;
+      width: 3.25rem;
+    }
+
+    .folder-tile__icon::before {
+      background: #d6ad39;
+      border: 1px solid #906d15;
+      border-bottom: 0;
+      border-radius: 2px 2px 0 0;
+      content: "";
+      height: .45rem;
+      left: .25rem;
+      position: absolute;
+      top: -.4rem;
+      width: 1.4rem;
+    }
+
+    .folder-tile__label {
+      max-width: 100%;
+      overflow: hidden;
+      text-align: center;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     dialog {
@@ -150,9 +203,64 @@
     const addImagesPathButton = document.querySelector("#add-images-path-button");
     const addImagesPathDialog = document.querySelector("#add-images-path-dialog");
     const cancelImportButton = document.querySelector("[data-dialog-cancel]");
+    const addImagesPathForm = addImagesPathDialog.querySelector("form");
+    const workspace = document.querySelector(".grid-space");
 
     addImagesPathButton.addEventListener("click", () => addImagesPathDialog.showModal());
     cancelImportButton.addEventListener("click", () => addImagesPathDialog.close());
+    addImagesPathForm.addEventListener("submit", () => {
+      const folderTile = document.createElement("div");
+      const folderIcon = document.createElement("span");
+      const folderLabel = document.createElement("span");
+      const labelInput = addImagesPathForm.elements.label;
+      const pathInput = addImagesPathForm.elements.path;
+
+      folderTile.className = "folder-tile";
+      folderTile.dataset.path = pathInput.value;
+      folderTile.style.left = "2rem";
+      folderTile.style.top = "2rem";
+      folderTile.setAttribute("role", "group");
+      folderTile.setAttribute("aria-label", `Image folder: ${labelInput.value}`);
+      folderIcon.className = "folder-tile__icon";
+      folderIcon.setAttribute("aria-hidden", "true");
+      folderLabel.className = "folder-tile__label";
+      folderLabel.textContent = labelInput.value;
+      folderTile.append(folderIcon, folderLabel);
+      workspace.append(folderTile);
+      addImagesPathForm.reset();
+    });
+
+    workspace.addEventListener("pointerdown", (event) => {
+      const folderTile = event.target.closest(".folder-tile");
+      if (!folderTile) {
+        return;
+      }
+
+      const workspaceBounds = workspace.getBoundingClientRect();
+      const tileBounds = folderTile.getBoundingClientRect();
+      const pointerOffsetX = event.clientX - tileBounds.left;
+      const pointerOffsetY = event.clientY - tileBounds.top;
+
+      folderTile.setPointerCapture(event.pointerId);
+      folderTile.addEventListener("pointermove", moveFolderTile);
+      folderTile.addEventListener("pointerup", stopMovingFolderTile, { once: true });
+      folderTile.addEventListener("pointercancel", stopMovingFolderTile, { once: true });
+
+      function moveFolderTile(moveEvent) {
+        const maximumLeft = workspaceBounds.width - folderTile.offsetWidth;
+        const maximumTop = workspaceBounds.height - folderTile.offsetHeight;
+        const left = Math.max(0, Math.min(maximumLeft, moveEvent.clientX - workspaceBounds.left - pointerOffsetX));
+        const top = Math.max(0, Math.min(maximumTop, moveEvent.clientY - workspaceBounds.top - pointerOffsetY));
+
+        folderTile.style.left = `${left}px`;
+        folderTile.style.top = `${top}px`;
+      }
+
+      function stopMovingFolderTile(stopEvent) {
+        folderTile.releasePointerCapture(stopEvent.pointerId);
+        folderTile.removeEventListener("pointermove", moveFolderTile);
+      }
+    });
   </script>
 </body>
 </html>

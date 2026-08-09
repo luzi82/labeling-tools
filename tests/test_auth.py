@@ -32,6 +32,8 @@ class AuthenticationTests(unittest.TestCase):
         self.assertIn('id="add-images-path-dialog"', response.text)
         self.assertIn('for="image-path">Path</label>', response.text)
         self.assertIn('for="image-label">Label</label>', response.text)
+        self.assertIn('class="grid-space"', response.text)
+        self.assertIn('className = "folder-tile"', response.text)
 
 
 if __name__ == "__main__":
