@@ -215,27 +215,58 @@
 
     addImagesFolderButton.addEventListener("click", () => addImagesFolderDialog.showModal());
     cancelImportButton.addEventListener("click", () => addImagesFolderDialog.close());
-    addImagesFolderForm.addEventListener("submit", () => {
+    addImagesFolderForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const labelInput = addImagesFolderForm.elements.label;
+      const pathInput = addImagesFolderForm.elements.path;
+      const x = 32;
+      const y = 32;
+
+      const response = await fetch("/image-folders", {
+        body: JSON.stringify({ label: labelInput.value, path: pathInput.value, x, y }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+      if (!response.ok) {
+        return;
+      }
+      const imageFolder = await response.json();
+
+      createFolderTile({ ...imageFolder, label: labelInput.value, path: pathInput.value, x, y });
+      addImagesFolderForm.reset();
+      addImagesFolderDialog.close();
+    });
+
+    async function loadImageFolders() {
+      const response = await fetch("/image-folders");
+      if (!response.ok) {
+        return;
+      }
+      const imageFolders = await response.json();
+      imageFolders.forEach(createFolderTile);
+    }
+
+    function createFolderTile(imageFolder) {
       const folderTile = document.createElement("div");
       const folderIcon = document.createElement("span");
       const folderLabel = document.createElement("span");
-      const labelInput = addImagesFolderForm.elements.label;
-      const pathInput = addImagesFolderForm.elements.path;
 
       folderTile.className = "folder-tile";
-      folderTile.dataset.path = pathInput.value;
-      folderTile.style.left = "2rem";
-      folderTile.style.top = "2rem";
+      folderTile.dataset.uuid = imageFolder.uuid;
+      folderTile.dataset.path = imageFolder.path;
+      folderTile.style.left = `${imageFolder.x}px`;
+      folderTile.style.top = `${imageFolder.y}px`;
       folderTile.setAttribute("role", "group");
-      folderTile.setAttribute("aria-label", `Image folder: ${labelInput.value}`);
+      folderTile.setAttribute("aria-label", `Image folder: ${imageFolder.label}`);
       folderIcon.className = "folder-tile__icon";
       folderIcon.setAttribute("aria-hidden", "true");
       folderLabel.className = "folder-tile__label";
-      folderLabel.textContent = labelInput.value;
+      folderLabel.textContent = imageFolder.label;
       folderTile.append(folderIcon, folderLabel);
       workspace.append(folderTile);
-      addImagesFolderForm.reset();
-    });
+    }
+
+    loadImageFolders();
 
     workspace.addEventListener("pointerdown", (event) => {
       const folderTile = event.target.closest(".folder-tile");

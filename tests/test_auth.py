@@ -1,6 +1,8 @@
 import unittest
+import csv
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from uuid import UUID
 
 from fastapi.testclient import TestClient
 
@@ -47,6 +49,65 @@ class AuthenticationTests(unittest.TestCase):
 
             self.assertTrue(working_folder.is_dir())
             self.assertEqual(arguments.working_folder, working_folder.resolve())
+
+    def test_creating_image_folder_appends_csv_entry(self) -> None:
+        with TemporaryDirectory() as directory:
+            previous_working_folder = app.state.working_folder
+            app.state.working_folder = Path(directory)
+            try:
+                self.client.post("/login", data={"password": config["password"]})
+                response = self.client.post(
+                    "/image-folders",
+                    json={"label": "Training images", "path": "/images/train", "x": 32, "y": 32},
+                )
+            finally:
+                app.state.working_folder = previous_working_folder
+
+            self.assertEqual(response.status_code, 200)
+            UUID(response.json()["uuid"])
+            with (Path(directory) / "image_folders.csv").open(newline="") as csv_file:
+                rows = list(csv.DictReader(csv_file))
+
+        self.assertEqual(rows, [{
+            "uuid": response.json()["uuid"],
+            "label": "Training images",
+            "path": "/images/train",
+            "x": "32.0",
+            "y": "32.0",
+        }])
+
+    def test_listing_image_folders_reads_csv_entries(self) -> None:
+        with TemporaryDirectory() as directory:
+            working_folder = Path(directory)
+            with (working_folder / "image_folders.csv").open("w", newline="") as csv_file:
+                writer = csv.DictWriter(
+                    csv_file, fieldnames=("uuid", "label", "path", "x", "y")
+                )
+                writer.writeheader()
+                writer.writerow({
+                    "uuid": "9c0ccd87-3d32-4f3d-8a71-a261d12bc530",
+                    "label": "Saved images",
+                    "path": "/images/saved",
+                    "x": "96",
+                    "y": "144",
+                })
+
+            previous_working_folder = app.state.working_folder
+            app.state.working_folder = working_folder
+            try:
+                self.client.post("/login", data={"password": config["password"]})
+                response = self.client.get("/image-folders")
+            finally:
+                app.state.working_folder = previous_working_folder
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [{
+            "uuid": "9c0ccd87-3d32-4f3d-8a71-a261d12bc530",
+            "label": "Saved images",
+            "path": "/images/saved",
+            "x": 96.0,
+            "y": 144.0,
+        }])
 
 
 if __name__ == "__main__":

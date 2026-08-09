@@ -30,6 +30,7 @@ def load_config() -> dict[str, str]:
 
 config = load_config()
 app = FastAPI(title="Labeling Tools API")
+app.state.working_folder = Path.cwd()
 app.add_middleware(SessionMiddleware, secret_key=config["session_secret"], https_only=False)
 templates = Jinja2Templates(directory=Path(__file__).with_name("templates"))
 
@@ -99,4 +100,5 @@ app.include_router(protected_pages)
 if __name__ == "__main__":
   startup_arguments = parse_startup_arguments()
   os.chdir(startup_arguments.working_folder)
+  app.state.working_folder = startup_arguments.working_folder
   uvicorn.run(app, host="0.0.0.0", port=8000)
