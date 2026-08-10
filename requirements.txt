@@ -3,5 +3,6 @@ httpx2
 jinja2
 uvicorn[standard]
 itsdangerous
+pillow
 pyyaml
 python-multipart

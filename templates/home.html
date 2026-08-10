@@ -121,6 +121,32 @@
       white-space: nowrap;
     }
 
+    .folder-tile__import {
+      background: #1e6245;
+      border: 0;
+      border-radius: 4px;
+      color: #fff;
+      cursor: pointer;
+      font: inherit;
+      padding: .35rem .55rem;
+    }
+
+    .image-tile {
+      background: #fffdf8;
+      border: 1px solid #879b89;
+      box-shadow: 0 3px 8px #17261d1c;
+      box-sizing: border-box;
+      line-height: 0;
+      position: absolute;
+    }
+
+    .image-tile img {
+      display: block;
+      height: 100%;
+      object-fit: contain;
+      width: 100%;
+    }
+
     dialog {
       background: #fffdf8;
       border: 1px solid #cbd7cc;
@@ -250,8 +276,9 @@
       const folderTile = document.createElement("div");
       const folderIcon = document.createElement("span");
       const folderLabel = document.createElement("span");
+      const importButton = document.createElement("button");
 
-      folderTile.className = "folder-tile";
+      folderTile.className = "folder-tile workspace-item";
       folderTile.dataset.uuid = imageFolder.uuid;
       folderTile.dataset.path = imageFolder.path;
       folderTile.style.left = `${imageFolder.x}px`;
@@ -262,15 +289,52 @@
       folderIcon.setAttribute("aria-hidden", "true");
       folderLabel.className = "folder-tile__label";
       folderLabel.textContent = imageFolder.label;
-      folderTile.append(folderIcon, folderLabel);
+      importButton.className = "folder-tile__import";
+      importButton.type = "button";
+      importButton.textContent = "Import";
+      importButton.addEventListener("pointerdown", (event) => event.stopPropagation());
+      importButton.addEventListener("click", () => importFolderImages(imageFolder.uuid));
+      folderTile.append(folderIcon, folderLabel, importButton);
       workspace.append(folderTile);
+    }
+
+    async function importFolderImages(folderId) {
+      const response = await fetch(`/image-folders/${folderId}/import`, { method: "POST" });
+      if (!response.ok) {
+        return;
+      }
+      const images = await response.json();
+      images.forEach((image, index) => createImageTile(folderId, image, index));
+    }
+
+    function createImageTile(folderId, image, index) {
+      const imageTile = document.createElement("div");
+      const imageElement = document.createElement("img");
+      const column = index % 3;
+      const row = Math.floor(index / 3);
+
+      imageTile.className = "image-tile workspace-item";
+      imageTile.style.left = `${192 + column * 400}px`;
+      imageTile.style.top = `${32 + row * 400}px`;
+      imageTile.style.width = `${image.width}px`;
+      imageTile.style.height = `${image.height}px`;
+      imageElement.alt = "";
+      imageElement.height = image.height;
+      imageElement.src = `/image-folders/${folderId}/images/${encodeURIComponent(image.path)}`;
+      imageElement.width = image.width;
+      imageTile.append(imageElement);
+      workspace.append(imageTile);
     }
 
     loadImageFolders();
 
     workspace.addEventListener("pointerdown", (event) => {
       const folderTile = event.target.closest(".folder-tile");
+      const workspaceItem = event.target.closest(".workspace-item");
       if (!folderTile) {
+        if (workspaceItem) {
+          return;
+        }
         panWorkspace(event);
         return;
       }
@@ -318,7 +382,7 @@
         workspaceOffsetX += deltaX;
         workspaceOffsetY += deltaY;
         workspace.style.backgroundPosition = `${workspaceOffsetX}px ${workspaceOffsetY}px`;
-        workspace.querySelectorAll(".folder-tile").forEach((tile) => {
+        workspace.querySelectorAll(".workspace-item").forEach((tile) => {
           tile.style.left = `${tile.offsetLeft + deltaX}px`;
           tile.style.top = `${tile.offsetTop + deltaY}px`;
         });
