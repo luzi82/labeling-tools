@@ -15,7 +15,7 @@ from starlette.templating import Jinja2Templates
 
 
 def load_config() -> dict[str, str]:
-  config_path = Path(__file__).with_name("config.yaml")
+  config_path = Path(__file__).parent.parent / "config.yaml"
   with config_path.open(encoding="utf-8") as config_file:
     config = yaml.safe_load(config_file)
 
