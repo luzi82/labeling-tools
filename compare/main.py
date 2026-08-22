@@ -6,26 +6,12 @@ from pathlib import Path
 from secrets import compare_digest
 
 import uvicorn
-import yaml
 from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from home import router as home_router
+from common.config import load_config
+from compare.home import router as home_router
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.templating import Jinja2Templates
-
-
-def load_config() -> dict[str, str]:
-  config_path = Path(__file__).parent.parent / "config.yaml"
-  with config_path.open(encoding="utf-8") as config_file:
-    config = yaml.safe_load(config_file)
-
-  if not isinstance(config, dict) or not all(
-    isinstance(config.get(key), str) and config[key]
-    for key in ("password", "session_secret")
-  ):
-    raise RuntimeError("config.yaml must define non-empty password and session_secret values")
-
-  return config
 
 
 config = load_config()
