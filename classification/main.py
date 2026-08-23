@@ -103,27 +103,36 @@ def load_classification_config(working_folder: Path) -> dict[str, list[str]]:
   return {"label_list": labels, "image_folder_path_list": resolved_folders}
 
 
-def read_classifications(working_folder: Path) -> dict[str, str]:
+def read_classification_rows(working_folder: Path) -> list[dict[str, str]]:
   csv_path = working_folder / "classification.csv"
   if not csv_path.exists():
-    return {}
+    return []
 
   with csv_path.open(newline="", encoding="utf-8") as csv_file:
     reader = csv.DictReader(csv_file)
     if tuple(reader.fieldnames or ()) != CSV_FIELDNAMES:
       raise ValueError("classification.csv must have exactly these columns: image_path,label")
 
-    classifications: dict[str, str] = {}
+    rows: list[dict[str, str]] = []
+    image_paths: set[str] = set()
     for row_number, row in enumerate(reader, start=2):
       image_path = row.get("image_path")
       label = row.get("label")
       if not image_path or not label or not Path(image_path).is_absolute():
         raise ValueError(f"Invalid classification.csv row {row_number}")
       normalized_path = str(Path(image_path).resolve())
-      if normalized_path in classifications:
+      if normalized_path in image_paths:
         raise ValueError(f"Duplicate image_path in classification.csv: {normalized_path}")
-      classifications[normalized_path] = label
-  return classifications
+      image_paths.add(normalized_path)
+      rows.append({"image_path": normalized_path, "label": label})
+  return rows
+
+
+def read_classifications(working_folder: Path) -> dict[str, str]:
+  return {
+    row["image_path"]: row["label"]
+    for row in read_classification_rows(working_folder)
+  }
 
 
 def discover_images(image_folder_paths: list[str]) -> list[Path]:
@@ -162,6 +171,20 @@ def append_classification(working_folder: Path, image_path: Path, label: str) ->
     writer.writerow({"image_path": str(image_path), "label": label})
 
 
+def remove_last_classification(working_folder: Path) -> dict[str, str] | None:
+  rows = read_classification_rows(working_folder)
+  if not rows:
+    return None
+
+  removed_row = rows.pop()
+  csv_path = working_folder / "classification.csv"
+  with csv_path.open("w", newline="", encoding="utf-8") as csv_file:
+    writer = csv.DictWriter(csv_file, fieldnames=CSV_FIELDNAMES)
+    writer.writeheader()
+    writer.writerows(rows)
+  return removed_row
+
+
 protected_pages = APIRouter(dependencies=[Depends(require_authentication)])
 
 
@@ -192,20 +215,25 @@ def logout(request: Request) -> RedirectResponse:
 
 
 @protected_pages.get("/", response_class=HTMLResponse)
-def home(request: Request) -> HTMLResponse:
+def home(request: Request, image_path: str | None = None) -> HTMLResponse:
   working_folder = request.app.state.working_folder
   try:
     classification_config, unclassified_images = get_unclassified_images(working_folder)
   except ValueError as error:
     raise HTTPException(status_code=422, detail=str(error)) from error
 
-  image_path = random.choice(unclassified_images) if unclassified_images else None
+  selected_image_path = Path(image_path).resolve() if image_path else None
+  if selected_image_path and selected_image_path not in unclassified_images:
+    raise HTTPException(status_code=404, detail="Image is not available for classification")
+  selected_image_path = selected_image_path or (
+    random.choice(unclassified_images) if unclassified_images else None
+  )
   return templates.TemplateResponse(
     request=request,
     name="home.html",
     context={
       "labels": classification_config["label_list"],
-      "image_path": str(image_path) if image_path else None,
+      "image_path": str(selected_image_path) if selected_image_path else None,
     },
   )
 
@@ -246,6 +274,17 @@ def create_classification(request: Request, submission: LabelSubmission) -> dict
 
   append_classification(working_folder, image_path, submission.label)
   return {"image_path": str(image_path), "label": submission.label}
+
+
+@protected_pages.post("/classifications/undo")
+def undo_last_classification(request: Request) -> dict[str, str]:
+  try:
+    removed_row = remove_last_classification(request.app.state.working_folder)
+  except ValueError as error:
+    raise HTTPException(status_code=422, detail=str(error)) from error
+  if removed_row is None:
+    raise HTTPException(status_code=409, detail="There is no classification to undo")
+  return removed_row
 
 
 app.include_router(protected_pages)

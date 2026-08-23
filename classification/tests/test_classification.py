@@ -49,6 +49,8 @@ class ClassificationTests(unittest.TestCase):
 
     self.assertEqual(response.status_code, 200)
     self.assertIn("All images are classified.", response.text)
+    self.assertIn('id="undo-button"', response.text)
+    self.assertIn("undoLastClassification", response.text)
 
   def test_discovers_subfolder_image_and_writes_one_classification(self) -> None:
     with TemporaryDirectory() as directory:
@@ -102,6 +104,47 @@ class ClassificationTests(unittest.TestCase):
 
     self.assertEqual(response.status_code, 422)
     self.assertIn("Duplicate image_path", response.text)
+
+  def test_undo_removes_latest_classification_and_restores_its_image(self) -> None:
+    with TemporaryDirectory() as directory:
+      working_folder = Path(directory)
+      image_folder = working_folder / "images"
+      image_folder.mkdir()
+      first_image = image_folder / "first.png"
+      second_image = image_folder / "second.png"
+      Image.new("RGB", (8, 8)).save(first_image)
+      Image.new("RGB", (8, 8)).save(second_image)
+      self.write_config(working_folder, ["label"], image_folder)
+      previous_working_folder = self.use_working_folder(working_folder)
+      try:
+        self.login()
+        self.client.post("/classifications", json={"image_path": str(first_image), "label": "label"})
+        self.client.post("/classifications", json={"image_path": str(second_image), "label": "label"})
+        undo_response = self.client.post("/classifications/undo")
+        restored_response = self.client.get(
+          "/", params={"image_path": str(second_image.resolve())}
+        )
+        redo_response = self.client.post(
+          "/classifications", json={"image_path": str(second_image), "label": "label"}
+        )
+        next_image_response = self.client.get("/")
+      finally:
+        app.state.working_folder = previous_working_folder
+
+      with (working_folder / "classification.csv").open(newline="", encoding="utf-8") as csv_file:
+        rows = list(csv.DictReader(csv_file))
+
+    self.assertEqual(undo_response.status_code, 200)
+    self.assertEqual(undo_response.json()["image_path"], str(second_image.resolve()))
+    self.assertEqual(restored_response.status_code, 200)
+    self.assertIn(str(second_image.resolve()), restored_response.text)
+    self.assertEqual(redo_response.status_code, 200)
+    self.assertEqual(next_image_response.status_code, 200)
+    self.assertIn("All images are classified.", next_image_response.text)
+    self.assertEqual(rows, [
+      {"image_path": str(first_image.resolve()), "label": "label"},
+      {"image_path": str(second_image.resolve()), "label": "label"},
+    ])
 
   def test_more_than_nine_labels_is_rejected(self) -> None:
     with TemporaryDirectory() as directory:

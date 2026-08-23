@@ -24,55 +24,22 @@
 <body>
   <header>
     <h1>Image Classification</h1>
-    <form action="/logout" method="post"><button class="logout" type="submit">Sign out</button></form>
+    <div>
+      <button id="undo-button" type="button"><span class="label-key">Z</span>Undo last image</button>
+      <form action="/logout" method="post"><button class="logout" type="submit">Sign out</button></form>
+    </div>
   </header>
   <main>
+    <p id="status" role="alert"></p>
     {% if image_path %}
     <section aria-label="Image to classify">
       <div class="image-frame"><img alt="Image awaiting classification" src="/image?image_path={{ image_path | urlencode }}"></div>
-      <p id="status" role="alert"></p>
       <div class="labels" aria-label="Classification labels">
         {% for label in labels %}
         <button class="label-button" data-label="{{ label }}" type="button"><span class="label-key">{{ loop.index }}</span>{{ label }}</button>
         {% endfor %}
       </div>
     </section>
-    <script>
-      const imagePath = {{ image_path | tojson }};
-      const labels = {{ labels | tojson }};
-      const status = document.querySelector("#status");
-      let submitting = false;
-
-      async function submitLabel(label) {
-        if (submitting) return;
-        submitting = true;
-        status.textContent = "Saving classification...";
-        try {
-          const response = await fetch("/classifications", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ image_path: imagePath, label }),
-          });
-          if (!response.ok) throw new Error("Unable to save the classification.");
-          window.location.reload();
-        } catch (error) {
-          status.textContent = error.message;
-          submitting = false;
-        }
-      }
-
-      document.querySelectorAll(".label-button").forEach((button) => {
-        button.addEventListener("click", () => submitLabel(button.dataset.label));
-      });
-      window.addEventListener("keydown", (event) => {
-        if (event.ctrlKey || event.altKey || event.metaKey || event.repeat) return;
-        const index = Number.parseInt(event.key, 10) - 1;
-        if (Number.isInteger(index) && index >= 0 && index < labels.length) {
-          event.preventDefault();
-          submitLabel(labels[index]);
-        }
-      });
-    </script>
     {% else %}
     <section class="complete">
       <h2>All images are classified.</h2>
@@ -81,5 +48,62 @@
     </section>
     {% endif %}
   </main>
+  <script>
+    const imagePath = {{ image_path | tojson }};
+    const labels = {{ labels | tojson }};
+    const status = document.querySelector("#status");
+    let submitting = false;
+
+    async function submitLabel(label) {
+      if (submitting) return;
+      submitting = true;
+      status.textContent = "Saving classification...";
+      try {
+        const response = await fetch("/classifications", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image_path: imagePath, label }),
+        });
+        if (!response.ok) throw new Error("Unable to save the classification.");
+        window.location.assign("/");
+      } catch (error) {
+        status.textContent = error.message;
+        submitting = false;
+      }
+    }
+
+    async function undoLastClassification() {
+      if (submitting) return;
+      submitting = true;
+      status.textContent = "Restoring last image...";
+      try {
+        const response = await fetch("/classifications/undo", { method: "POST" });
+        if (!response.ok) throw new Error("Unable to restore the last image.");
+        const classification = await response.json();
+        window.location.assign(`/?image_path=${encodeURIComponent(classification.image_path)}`);
+      } catch (error) {
+        status.textContent = error.message;
+        submitting = false;
+      }
+    }
+
+    document.querySelectorAll(".label-button").forEach((button) => {
+      button.addEventListener("click", () => submitLabel(button.dataset.label));
+    });
+    document.querySelector("#undo-button").addEventListener("click", undoLastClassification);
+    window.addEventListener("keydown", (event) => {
+      if (event.ctrlKey || event.altKey || event.metaKey || event.repeat) return;
+      if (event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        undoLastClassification();
+        return;
+      }
+      const index = Number.parseInt(event.key, 10) - 1;
+      if (Number.isInteger(index) && index >= 0 && index < labels.length) {
+        event.preventDefault();
+        submitLabel(labels[index]);
+      }
+    });
+  </script>
 </body>
 </html>
