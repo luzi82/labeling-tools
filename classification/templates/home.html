@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Image Classification</title>
+  <style>
+    :root { color-scheme: light; }
+    body { background: #e7efe9; color: #17261d; font-family: Georgia, serif; margin: 0; }
+    header { align-items: center; background: #fffdf8; border-bottom: 1px solid #cbd7cc; display: flex; justify-content: space-between; padding: 1rem clamp(1rem, 4vw, 3rem); }
+    h1 { font-size: 1.4rem; margin: 0; }
+    main { margin: 0 auto; max-width: 1000px; padding: clamp(1rem, 4vw, 3rem); }
+    .image-frame { align-items: center; background: #fffdf8; border: 1px solid #cbd7cc; display: flex; justify-content: center; min-height: 24rem; padding: 1rem; }
+    img { display: block; max-height: min(65vh, 720px); max-width: 100%; object-fit: contain; }
+    .labels { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); margin-top: 1rem; }
+    button { background: #1e6245; border: 0; border-radius: 4px; color: #fff; cursor: pointer; font: inherit; padding: .8rem 1rem; }
+    button:hover, button:focus-visible { background: #154a34; outline: 3px solid #9cc9a7; outline-offset: 2px; }
+    .label-key { background: #d6ead9; border-radius: 3px; color: #17261d; display: inline-block; font-family: monospace; font-weight: bold; margin-right: .5rem; padding: .15rem .35rem; }
+    .logout { background: #56675b; }
+    .complete { background: #fffdf8; border: 1px solid #cbd7cc; padding: 2rem; text-align: center; }
+    #status { color: #a12e20; min-height: 1.5rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Image Classification</h1>
+    <form action="/logout" method="post"><button class="logout" type="submit">Sign out</button></form>
+  </header>
+  <main>
+    {% if image_path %}
+    <section aria-label="Image to classify">
+      <div class="image-frame"><img alt="Image awaiting classification" src="/image?image_path={{ image_path | urlencode }}"></div>
+      <p id="status" role="alert"></p>
+      <div class="labels" aria-label="Classification labels">
+        {% for label in labels %}
+        <button class="label-button" data-label="{{ label }}" type="button"><span class="label-key">{{ loop.index }}</span>{{ label }}</button>
+        {% endfor %}
+      </div>
+    </section>
+    <script>
+      const imagePath = {{ image_path | tojson }};
+      const labels = {{ labels | tojson }};
+      const status = document.querySelector("#status");
+      let submitting = false;
+
+      async function submitLabel(label) {
+        if (submitting) return;
+        submitting = true;
+        status.textContent = "Saving classification...";
+        try {
+          const response = await fetch("/classifications", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image_path: imagePath, label }),
+          });
+          if (!response.ok) throw new Error("Unable to save the classification.");
+          window.location.reload();
+        } catch (error) {
+          status.textContent = error.message;
+          submitting = false;
+        }
+      }
+
+      document.querySelectorAll(".label-button").forEach((button) => {
+        button.addEventListener("click", () => submitLabel(button.dataset.label));
+      });
+      window.addEventListener("keydown", (event) => {
+        if (event.ctrlKey || event.altKey || event.metaKey || event.repeat) return;
+        const index = Number.parseInt(event.key, 10) - 1;
+        if (Number.isInteger(index) && index >= 0 && index < labels.length) {
+          event.preventDefault();
+          submitLabel(labels[index]);
+        }
+      });
+    </script>
+    {% else %}
+    <section class="complete">
+      <h2>All images are classified.</h2>
+      <p>There are no unclassified images in the configured folders.</p>
+      <button type="button" onclick="window.location.reload()">Check again</button>
+    </section>
+    {% endif %}
+  </main>
+</body>
+</html>
