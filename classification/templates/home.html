@@ -9,6 +9,8 @@
     body { background: #e7efe9; color: #17261d; font-family: Georgia, serif; margin: 0; }
     header { align-items: center; background: #fffdf8; border-bottom: 1px solid #cbd7cc; display: flex; justify-content: space-between; padding: 1rem clamp(1rem, 4vw, 3rem); }
     h1 { font-size: 1.4rem; margin: 0; }
+    .header-actions { align-items: center; display: flex; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; }
+    .header-actions form { margin: 0; }
     main { margin: 0 auto; max-width: 1000px; padding: clamp(1rem, 4vw, 3rem); }
     .image-frame { align-items: center; background: #fffdf8; border: 1px solid #cbd7cc; display: flex; justify-content: center; min-height: 24rem; padding: 1rem; }
     img { display: block; max-height: min(65vh, 720px); max-width: 100%; object-fit: contain; }
@@ -24,7 +26,7 @@
 <body>
   <header>
     <h1>Image Classification</h1>
-    <div>
+    <div class="header-actions">
       <button id="undo-button" type="button"><span class="label-key">Z</span>Undo last image</button>
       <form action="/logout" method="post"><button class="logout" type="submit">Sign out</button></form>
     </div>
