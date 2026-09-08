@@ -146,6 +146,67 @@ class ClassificationTests(unittest.TestCase):
       {"image_path": str(second_image.resolve()), "label": "label"},
     ])
 
+  def test_review_paginates_items_and_undo_restores_corrected_label(self) -> None:
+    with TemporaryDirectory() as directory:
+      working_folder = Path(directory)
+      image_folder = working_folder / "images"
+      image_folder.mkdir()
+      labels = ["first", "second"]
+      self.write_config(working_folder, labels, image_folder)
+      image_paths = []
+      for index in range(101):
+        image_path = image_folder / f"image-{index:03}.png"
+        Image.new("RGB", (8, 8)).save(image_path)
+        image_paths.append(image_path)
+      with (working_folder / "classification.csv").open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=("image_path", "label"))
+        writer.writeheader()
+        for image_path in image_paths:
+          writer.writerow({"image_path": str(image_path.resolve()), "label": "first"})
+
+      previous_working_folder = self.use_working_folder(working_folder)
+      try:
+        self.login()
+        home_response = self.client.get("/")
+        first_page = self.client.get("/review/items", params={"label": "first"})
+        second_page = self.client.get("/review/items", params={"label": "first", "offset": 100})
+        update_response = self.client.patch(
+          "/classifications", json={"image_path": str(image_paths[0]), "label": "second"}
+        )
+        first_label_after_update = self.client.get("/review/items", params={"label": "first"})
+        second_label_after_update = self.client.get("/review/items", params={"label": "second"})
+        undo_response = self.client.post("/classifications/undo")
+        second_label_after_undo = self.client.get("/review/items", params={"label": "second"})
+      finally:
+        app.state.working_folder = previous_working_folder
+
+      with (working_folder / "classification.csv").open(newline="", encoding="utf-8") as csv_file:
+        rows = list(csv.DictReader(csv_file))
+
+    self.assertEqual(home_response.status_code, 200)
+    self.assertIn('href="/review?label=first"', home_response.text)
+    self.assertIn("first (101)", home_response.text)
+    self.assertEqual(first_page.status_code, 200)
+    self.assertEqual(len(first_page.json()["items"]), 100)
+    self.assertTrue(first_page.json()["has_more"])
+    self.assertEqual(second_page.json()["items"], [{
+      "image_path": str(image_paths[100].resolve()), "label": "first", "missing": False,
+    }])
+    self.assertEqual(update_response.status_code, 200)
+    self.assertTrue(update_response.json()["updated"])
+    self.assertNotIn(str(image_paths[0].resolve()), {
+      item["image_path"] for item in first_label_after_update.json()["items"]
+    })
+    self.assertEqual(second_label_after_update.json()["items"], [{
+      "image_path": str(image_paths[0].resolve()), "label": "second", "missing": False,
+    }])
+    self.assertEqual(undo_response.status_code, 200)
+    self.assertEqual(undo_response.json()["action"], "update")
+    self.assertEqual(undo_response.json()["label"], "first")
+    self.assertEqual(second_label_after_undo.json()["items"], [])
+    self.assertEqual(sum(row["image_path"] == str(image_paths[0].resolve()) for row in rows), 1)
+    self.assertEqual(rows[0]["label"], "first")
+
   def test_more_than_nine_labels_is_rejected(self) -> None:
     with TemporaryDirectory() as directory:
       working_folder = Path(directory)

@@ -20,6 +20,10 @@
     .label-key { background: #d6ead9; border-radius: 3px; color: #17261d; display: inline-block; font-family: monospace; font-weight: bold; margin-right: .5rem; padding: .15rem .35rem; }
     .logout { background: #56675b; }
     .complete { background: #fffdf8; border: 1px solid #cbd7cc; padding: 2rem; text-align: center; }
+    .review { margin-top: 2rem; }
+    .review h2 { font-size: 1.1rem; }
+    .review-links { display: flex; flex-wrap: wrap; gap: .75rem; }
+    .review-links a { background: #fffdf8; border: 1px solid #879b89; border-radius: 4px; color: #17261d; padding: .65rem .8rem; text-decoration: none; }
     #status { color: #a12e20; min-height: 1.5rem; }
   </style>
 </head>
@@ -49,6 +53,14 @@
       <button type="button" onclick="window.location.reload()">Check again</button>
     </section>
     {% endif %}
+    <section class="review" aria-label="Review classifications">
+      <h2>Review classifications</h2>
+      <div class="review-links">
+        {% for label in labels %}
+        <a href="/review?label={{ label | urlencode }}">{{ label }} ({{ label_counts[label] }})</a>
+        {% endfor %}
+      </div>
+    </section>
   </main>
   <script>
     const imagePath = {{ image_path | tojson }};
@@ -82,7 +94,10 @@
         const response = await fetch("/classifications/undo", { method: "POST" });
         if (!response.ok) throw new Error("Unable to restore the last image.");
         const classification = await response.json();
-        window.location.assign(`/?image_path=${encodeURIComponent(classification.image_path)}`);
+        const destination = classification.action === "create"
+          ? `/?image_path=${encodeURIComponent(classification.image_path)}`
+          : "/";
+        window.location.assign(destination);
       } catch (error) {
         status.textContent = error.message;
         submitting = false;
