@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import csv
-import os
+import hashlib
+import json
 import random
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from secrets import compare_digest
 
@@ -25,14 +27,30 @@ from common.config import load_config
 
 
 IMAGE_EXTENSIONS = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp"}
-CSV_FIELDNAMES = ("image_path", "label")
-UNDO_HISTORY_FIELDNAMES = ("action", "image_path", "previous_label", "label")
+SOURCE_FIELDNAMES = ("image_path", "label")
+RESULT_FIELDNAMES = ("image_path", "label", "human_checked_state")
+NOT_HUMAN_CHECKED = "NOT_HUMAN_CHECKED"
+HUMAN_SCREENED = "HUMAN_SCREENED"
+HUMAN_CORRECTED = "HUMAN_CORRECTED"
+HUMAN_LABELED = "HUMAN_LABELED"
+HUMAN_CHECKED_STATES = {NOT_HUMAN_CHECKED, HUMAN_SCREENED, HUMAN_CORRECTED, HUMAN_LABELED}
 
 config = load_config()
 app = FastAPI(title="Image Classification")
-app.state.working_folder = Path.cwd()
+app.state.runtime = None
 app.add_middleware(SessionMiddleware, secret_key=config["session_secret"], https_only=False)
 templates = Jinja2Templates(directory=Path(__file__).with_name("templates"))
+
+
+@dataclass(frozen=True)
+class RuntimeConfig:
+  mode: str
+  labels: tuple[str, ...]
+  output_folder: Path
+  meta_yaml: Path
+  source_images: frozenset[str]
+  input_csv: Path | None = None
+  image_folder: Path | None = None
 
 
 class LabelSubmission(BaseModel):
@@ -49,97 +67,125 @@ def require_authentication(request: Request) -> None:
     raise HTTPException(status_code=303, headers={"Location": "/login"})
 
 
+def resolve_existing_file(value: str, argument: str) -> Path:
+  path = Path(value).expanduser().resolve()
+  if not path.is_file():
+    raise ValueError(f"{argument} must be an existing file: {path}")
+  return path
+
+
+def resolve_existing_directory(value: str, argument: str) -> Path:
+  path = Path(value).expanduser().resolve()
+  if not path.is_dir():
+    raise ValueError(f"{argument} must be an existing directory: {path}")
+  return path
+
+
 def parse_startup_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
   parser = argparse.ArgumentParser()
-  parser.add_argument(
-    "--working-folder",
-    default=Path.cwd(),
-    help="Directory containing classification_config.yaml and classification.csv.",
-  )
+  source_group = parser.add_mutually_exclusive_group(required=True)
+  source_group.add_argument("--input-csv", help="Read-only model classification CSV.")
+  source_group.add_argument("--image-folder", help="Folder of images for initial human labeling.")
+  parser.add_argument("--meta-yaml", required=True, help="YAML file containing label_list.")
+  parser.add_argument("--output-folder", required=True, help="Directory for human results.")
   options = parser.parse_args(arguments)
-  working_folder = Path(options.working_folder).expanduser().resolve()
-  working_folder.mkdir(parents=True, exist_ok=True)
-  if not working_folder.is_dir():
-    parser.error(f"--working-folder must be a directory: {working_folder}")
-  options.working_folder = working_folder
+  try:
+    options.meta_yaml = resolve_existing_file(options.meta_yaml, "--meta-yaml")
+    if options.input_csv:
+      options.input_csv = resolve_existing_file(options.input_csv, "--input-csv")
+      options.image_folder = None
+    else:
+      options.image_folder = resolve_existing_directory(options.image_folder, "--image-folder")
+      options.input_csv = None
+    options.output_folder = Path(options.output_folder).expanduser().resolve()
+    options.output_folder.mkdir(parents=True, exist_ok=True)
+    if not options.output_folder.is_dir():
+      raise ValueError(f"--output-folder must be a directory: {options.output_folder}")
+  except ValueError as error:
+    parser.error(str(error))
   return options
 
 
-def load_classification_config(working_folder: Path) -> dict[str, list[str]]:
-  config_path = working_folder / "classification_config.yaml"
-  if not config_path.is_file():
-    raise ValueError(f"Missing configuration file: {config_path}")
-
-  with config_path.open(encoding="utf-8") as config_file:
-    classification_config = yaml.safe_load(config_file)
-
-  if not isinstance(classification_config, dict):
-    raise ValueError("classification_config.yaml must contain a mapping")
-
-  labels = classification_config.get("label_list")
-  if not isinstance(labels, list) or not all(
-    isinstance(label, str) and label.strip() for label in labels
-  ):
-    raise ValueError("label_list must be a list of non-empty strings")
-  if not 1 <= len(labels) <= 9:
-    raise ValueError("label_list must contain between 1 and 9 labels")
-  if len(set(labels)) != len(labels):
-    raise ValueError("label_list must not contain duplicate labels")
-
-  folder_paths = classification_config.get("image_folder_path_list")
-  if not isinstance(folder_paths, list) or not folder_paths or not all(
-    isinstance(folder_path, str) and folder_path.strip() for folder_path in folder_paths
-  ):
-    raise ValueError("image_folder_path_list must be a non-empty list of paths")
-
-  resolved_folders: list[str] = []
-  for folder_path in folder_paths:
-    resolved_folder = Path(folder_path).expanduser()
-    if not resolved_folder.is_absolute():
-      resolved_folder = working_folder / resolved_folder
-    resolved_folder = resolved_folder.resolve()
-    if not resolved_folder.is_dir():
-      raise ValueError(f"Image folder does not exist or is not a directory: {resolved_folder}")
-    resolved_folders.append(str(resolved_folder))
-
-  return {"label_list": labels, "image_folder_path_list": resolved_folders}
+def load_labels(meta_yaml: Path) -> tuple[str, ...]:
+  with meta_yaml.open(encoding="utf-8") as meta_file:
+    metadata = yaml.safe_load(meta_file)
+  labels = metadata.get("label_list") if isinstance(metadata, dict) else None
+  if not isinstance(labels, list) or not all(isinstance(label, str) and label.strip() for label in labels):
+    raise ValueError("meta YAML label_list must be a list of non-empty strings")
+  if not 1 <= len(labels) <= 9 or len(set(labels)) != len(labels):
+    raise ValueError("meta YAML label_list must contain 1-9 unique labels")
+  return tuple(labels)
 
 
-def read_classification_rows(working_folder: Path) -> list[dict[str, str]]:
-  csv_path = working_folder / "classification.csv"
-  if not csv_path.exists():
-    return []
-
-  with csv_path.open(newline="", encoding="utf-8") as csv_file:
+def read_source_rows(input_csv: Path, labels: tuple[str, ...]) -> list[dict[str, str]]:
+  with input_csv.open(newline="", encoding="utf-8") as csv_file:
     reader = csv.DictReader(csv_file)
-    if tuple(reader.fieldnames or ()) != CSV_FIELDNAMES:
-      raise ValueError("classification.csv must have exactly these columns: image_path,label")
-
+    if tuple(reader.fieldnames or ()) != SOURCE_FIELDNAMES:
+      raise ValueError("input CSV must have exactly these columns: image_path,label")
     rows: list[dict[str, str]] = []
     image_paths: set[str] = set()
     for row_number, row in enumerate(reader, start=2):
       image_path = row.get("image_path")
       label = row.get("label")
-      if not image_path or not label or not Path(image_path).is_absolute():
-        raise ValueError(f"Invalid classification.csv row {row_number}")
+      if not image_path or not Path(image_path).is_absolute() or label not in labels:
+        raise ValueError(f"Invalid input CSV row {row_number}")
       normalized_path = str(Path(image_path).resolve())
       if normalized_path in image_paths:
-        raise ValueError(f"Duplicate image_path in classification.csv: {normalized_path}")
+        raise ValueError(f"Duplicate image_path in input CSV: {normalized_path}")
       image_paths.add(normalized_path)
       rows.append({"image_path": normalized_path, "label": label})
   return rows
 
 
-def read_classifications(working_folder: Path) -> dict[str, str]:
+def discover_images(image_folder: Path) -> list[Path]:
+  return sorted({
+    image_path.resolve() for image_path in image_folder.rglob("*")
+    if image_path.is_file() and image_path.suffix.lower() in IMAGE_EXTENSIONS
+  })
+
+
+def build_runtime(
+  *, input_csv: Path | None, image_folder: Path | None, meta_yaml: Path, output_folder: Path
+) -> RuntimeConfig:
+  labels = load_labels(meta_yaml)
+  if input_csv:
+    rows = read_source_rows(input_csv, labels)
+    return RuntimeConfig(
+      mode="model", labels=labels, output_folder=output_folder, meta_yaml=meta_yaml,
+      input_csv=input_csv, source_images=frozenset(row["image_path"] for row in rows),
+    )
+  if image_folder:
+    return RuntimeConfig(
+      mode="initial", labels=labels, output_folder=output_folder, meta_yaml=meta_yaml,
+      image_folder=image_folder, source_images=frozenset(str(image) for image in discover_images(image_folder)),
+    )
+  raise ValueError("Provide exactly one source")
+
+
+def content_hash(path: Path) -> str:
+  digest = hashlib.sha256()
+  with path.open("rb") as source_file:
+    for chunk in iter(lambda: source_file.read(1024 * 1024), b""):
+      digest.update(chunk)
+  return digest.hexdigest()
+
+
+def expected_manifest(runtime: RuntimeConfig) -> dict[str, object]:
+  source: dict[str, object] = {"image_paths": sorted(runtime.source_images)}
+  if runtime.input_csv:
+    source["input_csv"] = str(runtime.input_csv)
+    source["input_csv_sha256"] = content_hash(runtime.input_csv)
+  else:
+    source["image_folder"] = str(runtime.image_folder)
   return {
-    row["image_path"]: row["label"]
-    for row in read_classification_rows(working_folder)
+    "source_mode": runtime.mode,
+    "source": source,
+    "meta_yaml": str(runtime.meta_yaml),
+    "meta_yaml_sha256": content_hash(runtime.meta_yaml),
   }
 
 
-def rewrite_csv_rows(
-  csv_path: Path, fieldnames: tuple[str, ...], rows: list[dict[str, str]]
-) -> None:
+def rewrite_csv_rows(csv_path: Path, fieldnames: tuple[str, ...], rows: list[dict[str, str]]) -> None:
   temporary_file = tempfile.NamedTemporaryFile(
     "w", delete=False, dir=csv_path.parent, encoding="utf-8", newline=""
   )
@@ -154,177 +200,221 @@ def rewrite_csv_rows(
     temporary_path.unlink(missing_ok=True)
 
 
-def rewrite_classification_rows(working_folder: Path, rows: list[dict[str, str]]) -> None:
-  rewrite_csv_rows(working_folder / "classification.csv", CSV_FIELDNAMES, rows)
+def rewrite_json(path: Path, value: object) -> None:
+  temporary_file = tempfile.NamedTemporaryFile("w", delete=False, dir=path.parent, encoding="utf-8")
+  temporary_path = Path(temporary_file.name)
+  try:
+    with temporary_file:
+      json.dump(value, temporary_file, ensure_ascii=True, indent=2, sort_keys=True)
+      temporary_file.write("\n")
+    temporary_path.replace(path)
+  finally:
+    temporary_path.unlink(missing_ok=True)
 
 
-def read_undo_history(working_folder: Path) -> list[dict[str, str]]:
-  history_path = working_folder / "classification_undo_history.csv"
-  if not history_path.exists():
+def result_path(runtime: RuntimeConfig) -> Path:
+  return runtime.output_folder / "human_classification.csv"
+
+
+def history_path(runtime: RuntimeConfig) -> Path:
+  return runtime.output_folder / "human_classification_undo_history.json"
+
+
+def manifest_path(runtime: RuntimeConfig) -> Path:
+  return runtime.output_folder / "human_classification_manifest.json"
+
+
+def read_result_rows(runtime: RuntimeConfig) -> list[dict[str, str]]:
+  path = result_path(runtime)
+  if not path.exists():
     return []
-
-  with history_path.open(newline="", encoding="utf-8") as history_file:
-    reader = csv.DictReader(history_file)
-    if tuple(reader.fieldnames or ()) != UNDO_HISTORY_FIELDNAMES:
-      raise ValueError(
-        "classification_undo_history.csv must have action,image_path,previous_label,label columns"
-      )
-
-    history: list[dict[str, str]] = []
+  with path.open(newline="", encoding="utf-8") as csv_file:
+    reader = csv.DictReader(csv_file)
+    if tuple(reader.fieldnames or ()) != RESULT_FIELDNAMES:
+      raise ValueError("human_classification.csv has invalid columns")
+    rows: list[dict[str, str]] = []
+    image_paths: set[str] = set()
     for row_number, row in enumerate(reader, start=2):
-      action = row.get("action")
       image_path = row.get("image_path")
-      previous_label = row.get("previous_label")
       label = row.get("label")
-      if (
-        action not in {"create", "update"}
-        or not image_path
-        or not Path(image_path).is_absolute()
-        or not label
-        or (action == "create" and previous_label)
-        or (action == "update" and not previous_label)
-      ):
-        raise ValueError(f"Invalid classification_undo_history.csv row {row_number}")
-      history.append({
-        "action": action,
-        "image_path": str(Path(image_path).resolve()),
-        "previous_label": previous_label or "",
-        "label": label,
-      })
+      state = row.get("human_checked_state")
+      if not image_path or not label or not state:
+        raise ValueError(f"Invalid human result row {row_number}")
+      normalized_path = str(Path(image_path).resolve())
+      if normalized_path not in runtime.source_images or normalized_path in image_paths:
+        raise ValueError(f"Invalid image_path in human result row {row_number}")
+      if label not in runtime.labels or state not in HUMAN_CHECKED_STATES:
+        raise ValueError(f"Invalid label or human state in result row {row_number}")
+      image_paths.add(normalized_path)
+      rows.append({"image_path": normalized_path, "label": label, "human_checked_state": state})
+  if runtime.mode == "model" and image_paths != runtime.source_images:
+    raise ValueError("human result image set does not match model input")
+  return rows
+
+
+def rewrite_result_rows(runtime: RuntimeConfig, rows: list[dict[str, str]]) -> None:
+  rewrite_csv_rows(result_path(runtime), RESULT_FIELDNAMES, rows)
+
+
+def read_history(runtime: RuntimeConfig) -> list[dict[str, object]]:
+  path = history_path(runtime)
+  if not path.exists():
+    return []
+  with path.open(encoding="utf-8") as history_file:
+    history = json.load(history_file)
+  if not isinstance(history, list):
+    raise ValueError("human undo history must be a list")
   return history
 
 
-def rewrite_undo_history(working_folder: Path, history: list[dict[str, str]]) -> None:
-  rewrite_csv_rows(
-    working_folder / "classification_undo_history.csv", UNDO_HISTORY_FIELDNAMES, history
-  )
+def rewrite_history(runtime: RuntimeConfig, history: list[dict[str, object]]) -> None:
+  rewrite_json(history_path(runtime), history)
 
 
-def record_undo_action(
-  working_folder: Path, action: str, image_path: Path, previous_label: str, label: str
-) -> None:
-  history = read_undo_history(working_folder)
-  history.append({
-    "action": action,
-    "image_path": str(image_path),
-    "previous_label": previous_label,
-    "label": label,
-  })
-  rewrite_undo_history(working_folder, history)
+def initialize_output(runtime: RuntimeConfig) -> None:
+  runtime.output_folder.mkdir(parents=True, exist_ok=True)
+  if not runtime.output_folder.is_dir():
+    raise ValueError(f"Output folder is not a directory: {runtime.output_folder}")
+  expected = expected_manifest(runtime)
+  manifest = manifest_path(runtime)
+  results = result_path(runtime)
+  if manifest.exists() or results.exists():
+    if not manifest.exists() or not results.exists():
+      raise ValueError("Output folder has incomplete human classification data")
+    with manifest.open(encoding="utf-8") as manifest_file:
+      actual = json.load(manifest_file)
+    if actual != expected:
+      raise ValueError("Output folder source or metadata does not match this run")
+    read_result_rows(runtime)
+    read_history(runtime)
+    return
+  rows: list[dict[str, str]] = []
+  if runtime.mode == "model":
+    assert runtime.input_csv is not None
+    rows = [{**row, "human_checked_state": NOT_HUMAN_CHECKED} for row in read_source_rows(runtime.input_csv, runtime.labels)]
+  rewrite_result_rows(runtime, rows)
+  rewrite_history(runtime, [])
+  rewrite_json(manifest, expected)
 
 
-def discover_images(image_folder_paths: list[str]) -> list[Path]:
-  image_paths: set[Path] = set()
-  for folder_path in image_folder_paths:
-    for image_path in Path(folder_path).rglob("*"):
-      if image_path.is_file() and image_path.suffix.lower() in IMAGE_EXTENSIONS:
-        image_paths.add(image_path.resolve())
-  return sorted(image_paths)
+def runtime_for(request: Request) -> RuntimeConfig:
+  runtime = request.app.state.runtime
+  if not isinstance(runtime, RuntimeConfig):
+    raise HTTPException(status_code=503, detail="Classification application is not configured")
+  return runtime
 
 
-def get_unclassified_images(working_folder: Path) -> tuple[dict[str, list[str]], list[Path]]:
-  classification_config = load_classification_config(working_folder)
-  classifications = read_classifications(working_folder)
-  images = discover_images(classification_config["image_folder_path_list"])
-  return classification_config, [image for image in images if str(image) not in classifications]
-
-
-def count_classifications_by_label(labels: list[str], rows: list[dict[str, str]]) -> dict[str, int]:
-  counts = {label: 0 for label in labels}
-  for row in rows:
-    if row["label"] in counts:
-      counts[row["label"]] += 1
-  return counts
-
-
-def is_reviewable_image(image_path: Path, image_folder_paths: list[str]) -> bool:
+def is_available_image(runtime: RuntimeConfig, image_path: Path) -> bool:
   return (
-    image_path.is_file()
+    str(image_path.resolve()) in runtime.source_images
+    and image_path.is_file()
     and image_path.suffix.lower() in IMAGE_EXTENSIONS
-    and is_configured_image(image_path, image_folder_paths)
   )
 
 
-def get_review_items(
-  working_folder: Path, label: str, offset: int, limit: int
-) -> tuple[list[dict[str, str | bool]], int]:
-  classification_config = load_classification_config(working_folder)
-  if label not in classification_config["label_list"]:
-    raise ValueError("Label is not configured")
-
-  rows = sorted(
-    (row for row in read_classification_rows(working_folder) if row["label"] == label),
-    key=lambda row: row["image_path"],
-  )
-  items: list[dict[str, str | bool]] = []
-  for row in rows[offset:offset + limit]:
-    image_path = Path(row["image_path"])
-    items.append({
-      "image_path": row["image_path"],
-      "label": row["label"],
-      "missing": not is_reviewable_image(
-        image_path, classification_config["image_folder_path_list"]
-      ),
-    })
-  return items, len(rows)
+def record_action(runtime: RuntimeConfig, action: str, changes: list[dict[str, object]]) -> None:
+  history = read_history(runtime)
+  history.append({"action": action, "changes": changes})
+  rewrite_history(runtime, history)
 
 
-def is_configured_image(image_path: Path, image_folder_paths: list[str]) -> bool:
-  for folder_path in image_folder_paths:
-    try:
-      image_path.relative_to(Path(folder_path))
-      return True
-    except ValueError:
-      continue
-  return False
+def create_initial_classification(runtime: RuntimeConfig, image_path: Path, label: str) -> None:
+  rows = read_result_rows(runtime)
+  if any(row["image_path"] == str(image_path) for row in rows):
+    raise ValueError("Image already has a classification")
+  row = {"image_path": str(image_path), "label": label, "human_checked_state": HUMAN_LABELED}
+  rows.append(row)
+  rewrite_result_rows(runtime, rows)
+  record_action(runtime, "create", [{"before": None, "after": row}])
 
 
-def append_classification(working_folder: Path, image_path: Path, label: str) -> None:
-  rows = read_classification_rows(working_folder)
-  rows.append({"image_path": str(image_path), "label": label})
-  rewrite_classification_rows(working_folder, rows)
+def update_model_classification(runtime: RuntimeConfig, image_path: Path, label: str) -> bool:
+  rows = read_result_rows(runtime)
+  row = next((row for row in rows if row["image_path"] == str(image_path)), None)
+  if row is None:
+    raise ValueError("Image does not have a classification")
+  if row["label"] == label:
+    return False
+  before = dict(row)
+  row["label"] = label
+  row["human_checked_state"] = HUMAN_CORRECTED
+  rewrite_result_rows(runtime, rows)
+  record_action(runtime, "update", [{"before": before, "after": dict(row)}])
+  return True
 
 
-def remove_last_classification(working_folder: Path) -> dict[str, str] | None:
-  history = read_undo_history(working_folder)
+def complete_model_label(runtime: RuntimeConfig, label: str) -> int:
+  rows = read_result_rows(runtime)
+  changes: list[dict[str, object]] = []
+  for row in rows:
+    if row["label"] == label and row["human_checked_state"] == NOT_HUMAN_CHECKED:
+      before = dict(row)
+      row["human_checked_state"] = HUMAN_SCREENED
+      changes.append({"before": before, "after": dict(row)})
+  if not changes:
+    return 0
+  rewrite_result_rows(runtime, rows)
+  record_action(runtime, "screen", changes)
+  return len(changes)
+
+
+def undo_last_action(runtime: RuntimeConfig) -> dict[str, object] | None:
+  history = read_history(runtime)
   if not history:
     return None
-
   action = history[-1]
-  rows = read_classification_rows(working_folder)
-  row_index = next(
-    (index for index, row in enumerate(rows) if row["image_path"] == action["image_path"]),
-    None,
-  )
-  if row_index is None or rows[row_index]["label"] != action["label"]:
-    raise ValueError("Latest undo action does not match classification.csv")
+  action_name = action.get("action")
+  changes = action.get("changes")
+  if action_name not in {"create", "update", "screen"} or not isinstance(changes, list) or not changes:
+    raise ValueError("Invalid human undo history")
+  rows = read_result_rows(runtime)
+  rows_by_path = {row["image_path"]: row for row in rows}
+  for change in changes:
+    if not isinstance(change, dict) or not isinstance(change.get("after"), dict):
+      raise ValueError("Invalid human undo history change")
+    after = change["after"]
+    if rows_by_path.get(after.get("image_path")) != after:
+      raise ValueError("Latest undo action does not match human results")
+  for change in changes:
+    before = change["before"]
+    after = change["after"]
+    if before is None:
+      rows.remove(rows_by_path[after["image_path"]])
+    else:
+      rows_by_path[after["image_path"]].update(before)
+  rewrite_result_rows(runtime, rows)
+  rewrite_history(runtime, history[:-1])
+  return {"action": action_name, "changed_count": len(changes)}
 
-  if action["action"] == "create":
-    restored_row = rows.pop(row_index)
+
+def model_dashboard(runtime: RuntimeConfig) -> list[dict[str, object]]:
+  rows = read_result_rows(runtime)
+  dashboard: list[dict[str, object]] = []
+  for label in runtime.labels:
+    label_rows = [row for row in rows if row["label"] == label]
+    dashboard.append({
+      "label": label,
+      "total": len(label_rows),
+      "not_human_checked": sum(row["human_checked_state"] == NOT_HUMAN_CHECKED for row in label_rows),
+      "human_screened": sum(row["human_checked_state"] == HUMAN_SCREENED for row in label_rows),
+      "human_corrected": sum(row["human_checked_state"] == HUMAN_CORRECTED for row in label_rows),
+      "human_labeled": sum(row["human_checked_state"] == HUMAN_LABELED for row in label_rows),
+    })
+  return dashboard
+
+
+def get_review_items(runtime: RuntimeConfig, label: str | None, corrected_only: bool, offset: int, limit: int) -> tuple[list[dict[str, str | bool]], int]:
+  if runtime.mode != "model":
+    raise ValueError("Review is available only in model mode")
+  if corrected_only:
+    rows = [row for row in read_result_rows(runtime) if row["human_checked_state"] == HUMAN_CORRECTED]
+  elif label in runtime.labels:
+    rows = [row for row in read_result_rows(runtime) if row["label"] == label]
   else:
-    rows[row_index]["label"] = action["previous_label"]
-    restored_row = rows[row_index]
-  rewrite_classification_rows(working_folder, rows)
-  rewrite_undo_history(working_folder, history[:-1])
-  return restored_row
-
-
-def update_classification_label(working_folder: Path, image_path: Path, label: str) -> bool:
-  rows = read_classification_rows(working_folder)
-  row_index = next(
-    (index for index, row in enumerate(rows) if row["image_path"] == str(image_path)),
-    None,
-  )
-  if row_index is None:
-    raise ValueError("Image does not have a classification")
-  previous_label = rows[row_index]["label"]
-  if previous_label == label:
-    return False
-
-  rows[row_index]["label"] = label
-  rewrite_classification_rows(working_folder, rows)
-  record_undo_action(working_folder, "update", image_path, previous_label, label)
-  return True
+    raise ValueError("Label is not configured")
+  rows.sort(key=lambda row: row["image_path"])
+  items = [{**row, "missing": not is_available_image(runtime, Path(row["image_path"]))} for row in rows[offset:offset + limit]]
+  return items, len(rows)
 
 
 protected_pages = APIRouter(dependencies=[Depends(require_authentication)])
@@ -358,138 +448,99 @@ def logout(request: Request) -> RedirectResponse:
 
 @protected_pages.get("/", response_class=HTMLResponse)
 def home(request: Request, image_path: str | None = None) -> HTMLResponse:
-  working_folder = request.app.state.working_folder
-  try:
-    classification_config, unclassified_images = get_unclassified_images(working_folder)
-    label_counts = count_classifications_by_label(
-      classification_config["label_list"], read_classification_rows(working_folder)
-    )
-  except ValueError as error:
-    raise HTTPException(status_code=422, detail=str(error)) from error
-
-  selected_image_path = Path(image_path).resolve() if image_path else None
-  if selected_image_path and selected_image_path not in unclassified_images:
+  runtime = runtime_for(request)
+  if runtime.mode == "model":
+    return templates.TemplateResponse(request=request, name="home.html", context={"mode": "model", "dashboard": model_dashboard(runtime), "labels": runtime.labels})
+  rows = read_result_rows(runtime)
+  classified = {row["image_path"] for row in rows}
+  unclassified = [Path(path) for path in runtime.source_images if path not in classified]
+  selected = Path(image_path).resolve() if image_path else None
+  if selected and selected not in unclassified:
     raise HTTPException(status_code=404, detail="Image is not available for classification")
-  selected_image_path = selected_image_path or (
-    random.choice(unclassified_images) if unclassified_images else None
-  )
-  return templates.TemplateResponse(
-    request=request,
-    name="home.html",
-    context={
-      "labels": classification_config["label_list"],
-      "label_counts": label_counts,
-      "image_path": str(selected_image_path) if selected_image_path else None,
-    },
-  )
+  selected = selected or (random.choice(unclassified) if unclassified else None)
+  return templates.TemplateResponse(request=request, name="home.html", context={"mode": "initial", "labels": runtime.labels, "image_path": str(selected) if selected else None})
 
 
 @protected_pages.get("/image")
 def image(request: Request, image_path: str) -> FileResponse:
-  working_folder = request.app.state.working_folder
-  resolved_image_path = Path(image_path).resolve()
-  try:
-    classification_config, unclassified_images = get_unclassified_images(working_folder)
-    classifications = read_classifications(working_folder)
-  except ValueError as error:
-    raise HTTPException(status_code=422, detail=str(error)) from error
-  is_unclassified = resolved_image_path in unclassified_images
-  is_classified = str(resolved_image_path) in classifications
-  if not (is_unclassified or is_classified) or not is_reviewable_image(
-    resolved_image_path, classification_config["image_folder_path_list"]
-  ):
-    raise HTTPException(status_code=404, detail="Image is not available for classification")
-  return FileResponse(resolved_image_path)
+  runtime = runtime_for(request)
+  resolved = Path(image_path).resolve()
+  if not is_available_image(runtime, resolved):
+    raise HTTPException(status_code=404, detail="Image is not available")
+  return FileResponse(resolved)
 
 
 @protected_pages.post("/classifications")
 def create_classification(request: Request, submission: LabelSubmission) -> dict[str, str]:
-  working_folder = request.app.state.working_folder
+  runtime = runtime_for(request)
   image_path = Path(submission.image_path).resolve()
-  try:
-    classification_config = load_classification_config(working_folder)
-    classifications = read_classifications(working_folder)
-  except ValueError as error:
-    raise HTTPException(status_code=422, detail=str(error)) from error
-
-  if submission.label not in classification_config["label_list"]:
+  if runtime.mode != "initial":
+    raise HTTPException(status_code=405, detail="Initial labeling is unavailable in model mode")
+  if submission.label not in runtime.labels:
     raise HTTPException(status_code=422, detail="Label is not configured")
-  if not image_path.is_file() or image_path.suffix.lower() not in IMAGE_EXTENSIONS:
-    raise HTTPException(status_code=404, detail="Image does not exist")
-  if not is_configured_image(image_path, classification_config["image_folder_path_list"]):
-    raise HTTPException(status_code=404, detail="Image is not in a configured folder")
-  if str(image_path) in classifications:
-    raise HTTPException(status_code=409, detail="Image already has a classification")
-
-  append_classification(working_folder, image_path, submission.label)
-  record_undo_action(working_folder, "create", image_path, "", submission.label)
-  return {"image_path": str(image_path), "label": submission.label}
+  if not is_available_image(runtime, image_path):
+    raise HTTPException(status_code=404, detail="Image is not available")
+  try:
+    create_initial_classification(runtime, image_path, submission.label)
+  except ValueError as error:
+    raise HTTPException(status_code=409, detail=str(error)) from error
+  return {"image_path": str(image_path), "label": submission.label, "human_checked_state": HUMAN_LABELED}
 
 
 @protected_pages.get("/review", response_class=HTMLResponse)
-def review(request: Request, label: str) -> HTMLResponse:
-  try:
-    classification_config = load_classification_config(request.app.state.working_folder)
-  except ValueError as error:
-    raise HTTPException(status_code=422, detail=str(error)) from error
-  if label not in classification_config["label_list"]:
+def review(request: Request, label: str | None = None, corrected_only: bool = False) -> HTMLResponse:
+  runtime = runtime_for(request)
+  if runtime.mode != "model":
+    raise HTTPException(status_code=404, detail="Review is available only in model mode")
+  if not corrected_only and label not in runtime.labels:
     raise HTTPException(status_code=404, detail="Label is not configured")
-  return templates.TemplateResponse(
-    request=request,
-    name="review.html",
-    context={"label": label, "labels": classification_config["label_list"]},
-  )
+  return templates.TemplateResponse(request=request, name="review.html", context={"label": label, "labels": runtime.labels, "corrected_only": corrected_only})
 
 
 @protected_pages.get("/review/items")
-def review_items(
-  request: Request,
-  label: str,
-  offset: int = Query(default=0, ge=0),
-  limit: int = Query(default=100, ge=1, le=100),
-) -> dict[str, object]:
+def review_items(request: Request, label: str | None = None, corrected_only: bool = False, offset: int = Query(default=0, ge=0), limit: int = Query(default=100, ge=1, le=100)) -> dict[str, object]:
   try:
-    items, total = get_review_items(request.app.state.working_folder, label, offset, limit)
+    items, total = get_review_items(runtime_for(request), label, corrected_only, offset, limit)
   except ValueError as error:
     raise HTTPException(status_code=422, detail=str(error)) from error
   next_offset = offset + len(items)
-  return {
-    "items": items,
-    "total": total,
-    "next_offset": next_offset if next_offset < total else None,
-    "has_more": next_offset < total,
-  }
+  return {"items": items, "total": total, "next_offset": next_offset if next_offset < total else None, "has_more": next_offset < total}
 
 
 @protected_pages.patch("/classifications")
 def update_classification(request: Request, submission: LabelSubmission) -> dict[str, str | bool]:
-  working_folder = request.app.state.working_folder
+  runtime = runtime_for(request)
   image_path = Path(submission.image_path).resolve()
-  try:
-    classification_config = load_classification_config(working_folder)
-  except ValueError as error:
-    raise HTTPException(status_code=422, detail=str(error)) from error
-  if submission.label not in classification_config["label_list"]:
+  if runtime.mode != "model":
+    raise HTTPException(status_code=405, detail="Label correction is unavailable in initial mode")
+  if submission.label not in runtime.labels:
     raise HTTPException(status_code=422, detail="Label is not configured")
-  if not is_reviewable_image(image_path, classification_config["image_folder_path_list"]):
-    raise HTTPException(status_code=404, detail="Image is not available for review")
+  if not is_available_image(runtime, image_path):
+    raise HTTPException(status_code=404, detail="Image is not available")
   try:
-    updated = update_classification_label(working_folder, image_path, submission.label)
+    updated = update_model_classification(runtime, image_path, submission.label)
   except ValueError as error:
     raise HTTPException(status_code=409, detail=str(error)) from error
   return {"image_path": str(image_path), "label": submission.label, "updated": updated}
 
 
+@protected_pages.post("/review/complete")
+def complete_review(request: Request, label: str) -> dict[str, int]:
+  runtime = runtime_for(request)
+  if runtime.mode != "model" or label not in runtime.labels:
+    raise HTTPException(status_code=404, detail="Label is not configured for model review")
+  return {"changed_count": complete_model_label(runtime, label)}
+
+
 @protected_pages.post("/classifications/undo")
-def undo_last_classification(request: Request) -> dict[str, str]:
+def undo_last_classification(request: Request) -> dict[str, object]:
   try:
-    history = read_undo_history(request.app.state.working_folder)
-    removed_row = remove_last_classification(request.app.state.working_folder)
+    undone = undo_last_action(runtime_for(request))
   except ValueError as error:
     raise HTTPException(status_code=422, detail=str(error)) from error
-  if removed_row is None:
-    raise HTTPException(status_code=409, detail="There is no classification to undo")
-  return {**removed_row, "action": history[-1]["action"]}
+  if undone is None:
+    raise HTTPException(status_code=409, detail="There is no classification action to undo")
+  return undone
 
 
 app.include_router(protected_pages)
@@ -498,10 +549,9 @@ app.include_router(protected_pages)
 if __name__ == "__main__":
   startup_arguments = parse_startup_arguments()
   try:
-    load_classification_config(startup_arguments.working_folder)
-    read_classifications(startup_arguments.working_folder)
+    runtime = build_runtime(input_csv=startup_arguments.input_csv, image_folder=startup_arguments.image_folder, meta_yaml=startup_arguments.meta_yaml, output_folder=startup_arguments.output_folder)
+    initialize_output(runtime)
   except ValueError as error:
     raise SystemExit(f"Configuration error: {error}") from error
-  os.chdir(startup_arguments.working_folder)
-  app.state.working_folder = startup_arguments.working_folder
+  app.state.runtime = runtime
   uvicorn.run(app, host="0.0.0.0", port=8000)

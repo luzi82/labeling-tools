@@ -3,40 +3,37 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Review {{ label }} | Image Classification</title>
+  <title>Review | Image Classification</title>
   <style>
     body { background: #e7efe9; color: #17261d; font-family: Georgia, serif; margin: 0; }
     header { align-items: center; background: #fffdf8; border-bottom: 1px solid #cbd7cc; display: flex; gap: 1rem; justify-content: space-between; padding: 1rem clamp(1rem, 4vw, 3rem); }
-    h1 { font-size: 1.4rem; margin: 0; }
-    main { margin: 0 auto; max-width: 1280px; padding: clamp(1rem, 4vw, 3rem); }
-    a, button, select { font: inherit; }
-    a { color: #154a34; }
-    .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
-    .card { background: #fffdf8; border: 1px solid #cbd7cc; padding: .75rem; }
-    .card img { aspect-ratio: 1; display: block; object-fit: contain; width: 100%; }
-    .card label { display: block; font-size: .9rem; font-weight: bold; margin: .75rem 0 .3rem; }
-    .card select { box-sizing: border-box; padding: .45rem; width: 100%; }
-    .missing { align-items: center; aspect-ratio: 1; background: #f3e5df; color: #782f1f; display: flex; justify-content: center; padding: 1rem; text-align: center; }
-    #status { min-height: 1.5rem; }
-    #sentinel { height: 1px; }
+    h1 { font-size: 1.4rem; margin: 0; } main { margin: 0 auto; max-width: 1280px; padding: clamp(1rem, 4vw, 3rem); }
+    a, button, select { font: inherit; } a { color: #154a34; } button { background: #1e6245; border: 0; border-radius: 4px; color: #fff; cursor: pointer; padding: .65rem .8rem; }
+    .actions { display: flex; flex-wrap: wrap; gap: .5rem; } .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+    .card { background: #fffdf8; border: 1px solid #cbd7cc; padding: .75rem; } .card img { aspect-ratio: 1; display: block; object-fit: contain; width: 100%; }
+    .card label { display: block; font-size: .9rem; font-weight: bold; margin: .75rem 0 .3rem; } .card select { box-sizing: border-box; padding: .45rem; width: 100%; }
+    .state { font-size: .8rem; margin: .5rem 0 0; } .missing { align-items: center; aspect-ratio: 1; background: #f3e5df; color: #782f1f; display: flex; justify-content: center; padding: 1rem; text-align: center; }
+    #status { min-height: 1.5rem; } #sentinel { height: 1px; }
   </style>
 </head>
 <body>
   <header>
-    <h1>Review: {{ label }}</h1>
-    <div>
-      <button id="undo-button" type="button">Undo last change (Z)</button>
-      <a href="/">Back to classification</a>
+    <h1>{% if corrected_only %}Double-check corrected images{% else %}Review: {{ label }}{% endif %}</h1>
+    <div class="actions">
+      <button id="undo-button" type="button">Undo (Z)</button>
+      {% if not corrected_only %}<button id="complete-button" type="button">Complete and return</button>{% endif %}
+      <a href="/">Back to dashboard</a>
     </div>
   </header>
   <main>
     <p id="status" role="status">Loading images...</p>
-    <section class="grid" id="image-grid" aria-label="Images labeled {{ label }}"></section>
+    <section class="grid" id="image-grid" aria-label="Images under review"></section>
     <div id="sentinel"></div>
   </main>
   <script>
-    const currentLabel = {{ label | tojson }};
-    const labels = {{ labels | tojson }};
+    const currentLabel = {{ label | default(none) | tojson }};
+    const correctedOnly = {{ corrected_only | tojson }};
+    const labels = {{ labels | list | tojson }};
     const grid = document.querySelector("#image-grid");
     const status = document.querySelector("#status");
     const sentinel = document.querySelector("#sentinel");
@@ -47,57 +44,48 @@
     async function undoLastChange() {
       if (loading) return;
       loading = true;
-      status.textContent = "Restoring last change...";
       try {
         const response = await fetch("/classifications/undo", { method: "POST" });
-        if (!response.ok) throw new Error("Unable to restore the last change.");
+        if (!response.ok) throw new Error("Unable to undo the last action.");
         window.location.reload();
-      } catch (error) {
-        status.textContent = error.message;
-      } finally {
-        loading = false;
-      }
+      } catch (error) { status.textContent = error.message; loading = false; }
+    }
+
+    async function completeReview() {
+      if (loading) return;
+      loading = true;
+      try {
+        const response = await fetch(`/review/complete?label=${encodeURIComponent(currentLabel)}`, { method: "POST" });
+        if (!response.ok) throw new Error("Unable to complete the review.");
+        window.location.assign("/");
+      } catch (error) { status.textContent = error.message; loading = false; }
     }
 
     function createCard(item) {
       const card = document.createElement("article");
       card.className = "card";
-      if (item.missing) {
-        card.innerHTML = '<div class="missing">Image file is missing or unavailable.</div>';
-        return card;
-      }
+      if (item.missing) { card.innerHTML = '<div class="missing">Image file is missing or unavailable.</div>'; return card; }
       const image = document.createElement("img");
       image.alt = "Classified image";
       image.src = `/image?image_path=${encodeURIComponent(item.image_path)}`;
       const label = document.createElement("label");
       label.textContent = "Label";
       const select = document.createElement("select");
-      labels.forEach((labelName) => {
-        const option = new Option(labelName, labelName, false, labelName === item.label);
-        select.add(option);
-      });
+      labels.forEach((labelName) => select.add(new Option(labelName, labelName, false, labelName === item.label)));
       select.addEventListener("change", async () => {
         select.disabled = true;
         try {
-          const response = await fetch("/classifications", {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ image_path: item.image_path, label: select.value }),
-          });
+          const response = await fetch("/classifications", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ image_path: item.image_path, label: select.value }) });
           if (!response.ok) throw new Error("Unable to update the label.");
-          if (select.value !== currentLabel) {
-            card.remove();
-            nextOffset = Math.max(0, nextOffset - 1);
-          }
-        } catch (error) {
-          status.textContent = error.message;
-          select.value = item.label;
-        } finally {
-          select.disabled = false;
-        }
+          if (!correctedOnly && select.value !== currentLabel) { card.remove(); nextOffset = Math.max(0, nextOffset - 1); }
+        } catch (error) { status.textContent = error.message; select.value = item.label; }
+        finally { select.disabled = false; }
       });
+      const state = document.createElement("p");
+      state.className = "state";
+      state.textContent = item.human_checked_state;
       label.append(select);
-      card.append(image, label);
+      card.append(image, label, state);
       return card;
     }
 
@@ -105,31 +93,24 @@
       if (loading || !hasMore) return;
       loading = true;
       try {
-        const response = await fetch(`/review/items?label=${encodeURIComponent(currentLabel)}&offset=${nextOffset}`);
+        const parameters = new URLSearchParams({ offset: nextOffset });
+        if (correctedOnly) parameters.set("corrected_only", "true"); else parameters.set("label", currentLabel);
+        const response = await fetch(`/review/items?${parameters}`);
         if (!response.ok) throw new Error("Unable to load review images.");
         const page = await response.json();
         page.items.forEach((item) => grid.append(createCard(item)));
         nextOffset = page.next_offset ?? nextOffset;
         hasMore = page.has_more;
         status.textContent = hasMore ? `Showing ${grid.children.length} of ${page.total} images.` : `Showing all ${grid.children.length} images.`;
-      } catch (error) {
-        status.textContent = error.message;
-      } finally {
-        loading = false;
-      }
+      } catch (error) { status.textContent = error.message; }
+      finally { loading = false; }
     }
 
-    new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) loadItems();
-    }, { rootMargin: "600px" }).observe(sentinel);
+    new IntersectionObserver((entries) => { if (entries.some((entry) => entry.isIntersecting)) loadItems(); }, { rootMargin: "600px" }).observe(sentinel);
     document.querySelector("#undo-button").addEventListener("click", undoLastChange);
-    window.addEventListener("keydown", (event) => {
-      if (event.ctrlKey || event.altKey || event.metaKey || event.repeat) return;
-      if (event.key.toLowerCase() === "z") {
-        event.preventDefault();
-        undoLastChange();
-      }
-    });
+    const completeButton = document.querySelector("#complete-button");
+    if (completeButton) completeButton.addEventListener("click", completeReview);
+    window.addEventListener("keydown", (event) => { if (!event.ctrlKey && !event.altKey && !event.metaKey && !event.repeat && event.key.toLowerCase() === "z") { event.preventDefault(); undoLastChange(); } });
   </script>
 </body>
 </html>
