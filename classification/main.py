@@ -343,6 +343,20 @@ def update_model_classification(runtime: RuntimeConfig, image_path: Path, label:
   return True
 
 
+def update_initial_classification(runtime: RuntimeConfig, image_path: Path, label: str) -> bool:
+  rows = read_result_rows(runtime)
+  row = next((row for row in rows if row["image_path"] == str(image_path)), None)
+  if row is None:
+    raise ValueError("Image does not have a classification")
+  if row["label"] == label:
+    return False
+  before = dict(row)
+  row["label"] = label
+  rewrite_result_rows(runtime, rows)
+  record_action(runtime, "update", [{"before": before, "after": dict(row)}])
+  return True
+
+
 def complete_model_label(runtime: RuntimeConfig, label: str) -> int:
   rows = read_result_rows(runtime)
   changes: list[dict[str, object]] = []
@@ -384,7 +398,10 @@ def undo_last_action(runtime: RuntimeConfig) -> dict[str, object] | None:
       rows_by_path[after["image_path"]].update(before)
   rewrite_result_rows(runtime, rows)
   rewrite_history(runtime, history[:-1])
-  return {"action": action_name, "changed_count": len(changes)}
+  result: dict[str, object] = {"action": action_name, "changed_count": len(changes)}
+  if action_name == "create" and len(changes) == 1:
+    result["restored_image_path"] = changes[0]["after"]["image_path"]
+  return result
 
 
 def model_dashboard(runtime: RuntimeConfig) -> list[dict[str, object]]:
@@ -404,8 +421,8 @@ def model_dashboard(runtime: RuntimeConfig) -> list[dict[str, object]]:
 
 
 def get_review_items(runtime: RuntimeConfig, label: str | None, corrected_only: bool, offset: int, limit: int) -> tuple[list[dict[str, str | bool]], int]:
-  if runtime.mode != "model":
-    raise ValueError("Review is available only in model mode")
+  if runtime.mode == "initial" and corrected_only:
+    raise ValueError("Corrected-image review is available only in model mode")
   if corrected_only:
     rows = [row for row in read_result_rows(runtime) if row["human_checked_state"] == HUMAN_CORRECTED]
   elif label in runtime.labels:
@@ -447,11 +464,13 @@ def logout(request: Request) -> RedirectResponse:
 
 
 @protected_pages.get("/", response_class=HTMLResponse)
-def home(request: Request, image_path: str | None = None) -> HTMLResponse:
+def home(request: Request, image_path: str | None = None, view: str | None = None) -> HTMLResponse:
   runtime = runtime_for(request)
   if runtime.mode == "model":
     return templates.TemplateResponse(request=request, name="home.html", context={"mode": "model", "dashboard": model_dashboard(runtime), "labels": runtime.labels})
   rows = read_result_rows(runtime)
+  if view == "review":
+    return templates.TemplateResponse(request=request, name="home.html", context={"mode": "initial", "dashboard": model_dashboard(runtime), "labels": runtime.labels, "review_mode": True})
   classified = {row["image_path"] for row in rows}
   unclassified = [Path(path) for path in runtime.source_images if path not in classified]
   selected = Path(image_path).resolve() if image_path else None
@@ -490,11 +509,11 @@ def create_classification(request: Request, submission: LabelSubmission) -> dict
 @protected_pages.get("/review", response_class=HTMLResponse)
 def review(request: Request, label: str | None = None, corrected_only: bool = False) -> HTMLResponse:
   runtime = runtime_for(request)
-  if runtime.mode != "model":
-    raise HTTPException(status_code=404, detail="Review is available only in model mode")
+  if corrected_only and runtime.mode != "model":
+    raise HTTPException(status_code=404, detail="Corrected-image review is available only in model mode")
   if not corrected_only and label not in runtime.labels:
     raise HTTPException(status_code=404, detail="Label is not configured")
-  return templates.TemplateResponse(request=request, name="review.html", context={"label": label, "labels": runtime.labels, "corrected_only": corrected_only})
+  return templates.TemplateResponse(request=request, name="review.html", context={"label": label, "labels": runtime.labels, "corrected_only": corrected_only, "can_edit": True})
 
 
 @protected_pages.get("/review/items")
@@ -511,14 +530,12 @@ def review_items(request: Request, label: str | None = None, corrected_only: boo
 def update_classification(request: Request, submission: LabelSubmission) -> dict[str, str | bool]:
   runtime = runtime_for(request)
   image_path = Path(submission.image_path).resolve()
-  if runtime.mode != "model":
-    raise HTTPException(status_code=405, detail="Label correction is unavailable in initial mode")
   if submission.label not in runtime.labels:
     raise HTTPException(status_code=422, detail="Label is not configured")
   if not is_available_image(runtime, image_path):
     raise HTTPException(status_code=404, detail="Image is not available")
   try:
-    updated = update_model_classification(runtime, image_path, submission.label)
+    updated = (update_model_classification if runtime.mode == "model" else update_initial_classification)(runtime, image_path, submission.label)
   except ValueError as error:
     raise HTTPException(status_code=409, detail=str(error)) from error
   return {"image_path": str(image_path), "label": submission.label, "updated": updated}

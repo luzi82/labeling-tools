@@ -10,7 +10,7 @@
     h1 { font-size: 1.4rem; margin: 0; } main { margin: 0 auto; max-width: 1100px; padding: clamp(1rem, 4vw, 3rem); }
     button, a { font: inherit; } button { background: #1e6245; border: 0; border-radius: 4px; color: #fff; cursor: pointer; padding: .8rem 1rem; }
     button:hover, button:focus-visible { background: #154a34; outline: 3px solid #9cc9a7; outline-offset: 2px; }
-    .logout { background: #56675b; } .header-actions { display: flex; gap: .5rem; } .header-actions form { margin: 0; }
+    .logout { background: #56675b; } .header-actions { display: flex; gap: .5rem; } .header-actions form { margin: 0; } .view-toggle { align-self: center; color: #154a34; }
     .image-frame { align-items: center; background: #fffdf8; border: 1px solid #cbd7cc; display: flex; justify-content: center; min-height: 24rem; padding: 1rem; }
     img { display: block; max-height: min(65vh, 720px); max-width: 100%; object-fit: contain; }
     .labels, .dashboard { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); margin-top: 1rem; }
@@ -23,22 +23,21 @@
   <header>
     <h1>{% if mode == "model" %}Model label verification{% else %}Initial image labeling{% endif %}</h1>
     <div class="header-actions">
+      {% if mode == "initial" %}<a class="view-toggle" href="{% if review_mode %}/{% else %}/?view=review{% endif %}">{% if review_mode %}Continue labeling{% else %}Review labels{% endif %}</a>{% endif %}
       <button id="undo-button" type="button"><span class="label-key">Z</span>Undo</button>
       <form action="/logout" method="post"><button class="logout" type="submit">Sign out</button></form>
     </div>
   </header>
   <main>
     <p id="status" role="alert"></p>
-    {% if mode == "model" %}
-    <a class="corrected-link" href="/review?corrected_only=true">Double-check corrected images</a>
-    <section class="dashboard" aria-label="Labels to verify">
+    {% if mode == "model" or review_mode %}
+    {% if mode == "model" %}<a class="corrected-link" href="/review?corrected_only=true">Double-check corrected images</a>{% endif %}
+    <section class="dashboard" aria-label="Labels to review">
       {% for item in dashboard %}
       <article class="label-card">
         <h2><a href="/review?label={{ item.label | urlencode }}">{{ item.label }}</a></h2>
         <p>{{ item.total }} images</p>
-        <p>{{ item.not_human_checked }} unchecked</p>
-        <p>{{ item.human_screened }} screened</p>
-        <p>{{ item.human_corrected }} corrected</p>
+        {% if mode == "model" %}<p>{{ item.not_human_checked }} unchecked</p><p>{{ item.human_screened }} screened</p><p>{{ item.human_corrected }} corrected</p>{% endif %}
       </article>
       {% endfor %}
     </section>
@@ -67,7 +66,9 @@
       try {
         const response = await fetch("/classifications/undo", { method: "POST" });
         if (!response.ok) throw new Error("Unable to undo the last action.");
-        window.location.assign("/");
+        const undone = await response.json();
+        const restoredImagePath = undone.restored_image_path;
+        window.location.assign(mode === "initial" && typeof restoredImagePath === "string" ? `/?image_path=${encodeURIComponent(restoredImagePath)}` : "/");
       } catch (error) { status.textContent = error.message; submitting = false; }
     }
     async function submitLabel(label) {

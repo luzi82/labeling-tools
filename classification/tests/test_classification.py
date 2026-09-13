@@ -56,7 +56,9 @@ class ClassificationTests(unittest.TestCase):
       images = root / "images"
       images.mkdir()
       image_path = images / "sample.png"
+      next_image_path = images / "next.png"
       Image.new("RGB", (8, 8)).save(image_path)
+      Image.new("RGB", (8, 8)).save(next_image_path)
       meta_yaml = self.write_meta(root, ["first", "second"])
       output = root / "output"
       runtime = build_runtime(input_csv=None, image_folder=images, meta_yaml=meta_yaml, output_folder=output)
@@ -77,10 +79,59 @@ class ClassificationTests(unittest.TestCase):
     self.assertIn("Initial image labeling", home_response.text)
     self.assertIn('data-label="first"', home_response.text)
     self.assertEqual(create_response.json()["human_checked_state"], HUMAN_LABELED)
-    self.assertEqual(undo_response.json(), {"action": "create", "changed_count": 1})
+    self.assertEqual(undo_response.json(), {
+      "action": "create",
+      "changed_count": 1,
+      "restored_image_path": str(image_path.resolve()),
+    })
     self.assertEqual(restored_response.status_code, 200)
     self.assertIn(str(image_path.resolve()), restored_response.text)
     self.assertEqual(rows, [])
+
+  def test_initial_mode_can_review_past_labels_by_label(self) -> None:
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      images = root / "images"
+      images.mkdir()
+      first_image = images / "first.png"
+      second_image = images / "second.png"
+      Image.new("RGB", (8, 8)).save(first_image)
+      Image.new("RGB", (8, 8)).save(second_image)
+      meta_yaml = self.write_meta(root, ["first", "second"])
+      runtime = build_runtime(input_csv=None, image_folder=images, meta_yaml=meta_yaml, output_folder=root / "output")
+      initialize_output(runtime)
+      previous_runtime = self.use_runtime(runtime)
+      try:
+        self.login()
+        self.client.post("/classifications", json={"image_path": str(first_image), "label": "first"})
+        self.client.post("/classifications", json={"image_path": str(second_image), "label": "second"})
+        correction_response = self.client.patch("/classifications", json={"image_path": str(first_image), "label": "second"})
+        moved_items_response = self.client.get("/review/items", params={"label": "second"})
+        undo_response = self.client.post("/classifications/undo")
+        dashboard_response = self.client.get("/", params={"view": "review"})
+        review_response = self.client.get("/review", params={"label": "first"})
+        items_response = self.client.get("/review/items", params={"label": "first"})
+      finally:
+        app.state.runtime = previous_runtime
+
+    self.assertTrue(correction_response.json()["updated"])
+    self.assertIn({
+      "image_path": str(first_image.resolve()),
+      "label": "second",
+      "human_checked_state": HUMAN_LABELED,
+      "missing": False,
+    }, moved_items_response.json()["items"])
+    self.assertEqual(undo_response.json(), {"action": "update", "changed_count": 1})
+    self.assertEqual(dashboard_response.status_code, 200)
+    self.assertIn('href="/review?label=first"', dashboard_response.text)
+    self.assertIn("1 images", dashboard_response.text)
+    self.assertEqual(review_response.status_code, 200)
+    self.assertEqual(items_response.json()["items"], [{
+      "image_path": str(first_image.resolve()),
+      "label": "first",
+      "human_checked_state": HUMAN_LABELED,
+      "missing": False,
+    }])
 
   def test_model_output_is_materialized_and_dashboard_is_shown(self) -> None:
     with TemporaryDirectory() as directory:

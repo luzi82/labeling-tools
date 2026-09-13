@@ -72,6 +72,7 @@
       label.textContent = "Label";
       const select = document.createElement("select");
       labels.forEach((labelName) => select.add(new Option(labelName, labelName, false, labelName === item.label)));
+      select.disabled = !{{ can_edit | tojson }};
       select.addEventListener("change", async () => {
         select.disabled = true;
         try {
