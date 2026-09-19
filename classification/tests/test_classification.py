@@ -196,6 +196,41 @@ class ClassificationTests(unittest.TestCase):
     self.assertEqual(rows[0]["label"], "first")
     self.assertEqual(rows[0]["human_checked_state"], NOT_HUMAN_CHECKED)
 
+  def test_corrected_review_groups_by_current_label(self) -> None:
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      images = root / "images"
+      images.mkdir()
+      first_image = images / "first.png"
+      second_image = images / "second.png"
+      Image.new("RGB", (8, 8)).save(first_image)
+      Image.new("RGB", (8, 8)).save(second_image)
+      meta_yaml = self.write_meta(root, ["first", "second", "third"])
+      input_csv = root / "classification.csv"
+      self.write_model_csv(input_csv, [(first_image, "first"), (second_image, "first")])
+      runtime = build_runtime(input_csv=input_csv, image_folder=None, meta_yaml=meta_yaml, output_folder=root / "output")
+      initialize_output(runtime)
+      previous_runtime = self.use_runtime(runtime)
+      try:
+        self.login()
+        self.client.patch("/classifications", json={"image_path": str(first_image), "label": "second"})
+        second_items = self.client.get("/review/items", params={"corrected_only": "true", "label": "second"})
+        first_items = self.client.get("/review/items", params={"corrected_only": "true", "label": "first"})
+        all_items = self.client.get("/review/items", params={"corrected_only": "true"})
+        page = self.client.get("/review", params={"corrected_only": "true"})
+      finally:
+        app.state.runtime = previous_runtime
+
+    self.assertEqual(len(second_items.json()["items"]), 1)
+    self.assertEqual(second_items.json()["items"][0]["image_path"], str(first_image.resolve()))
+    self.assertEqual(second_items.json()["items"][0]["label"], "second")
+    self.assertEqual(first_items.json()["items"], [])
+    self.assertEqual(len(all_items.json()["items"]), 1)
+    self.assertEqual(page.status_code, 200)
+    self.assertIn("<h2>second (1)</h2>", page.text)
+    self.assertNotIn("<h2>first", page.text)
+    self.assertNotIn("<h2>third", page.text)
+
   def test_completing_model_label_screens_only_unmodified_rows_and_is_undoable(self) -> None:
     with TemporaryDirectory() as directory:
       root = Path(directory)

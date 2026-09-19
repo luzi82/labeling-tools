@@ -425,6 +425,10 @@ def get_review_items(runtime: RuntimeConfig, label: str | None, corrected_only: 
     raise ValueError("Corrected-image review is available only in model mode")
   if corrected_only:
     rows = [row for row in read_result_rows(runtime) if row["human_checked_state"] == HUMAN_CORRECTED]
+    if label is not None:
+      if label not in runtime.labels:
+        raise ValueError("Label is not configured")
+      rows = [row for row in rows if row["label"] == label]
   elif label in runtime.labels:
     rows = [row for row in read_result_rows(runtime) if row["label"] == label]
   else:
@@ -513,7 +517,10 @@ def review(request: Request, label: str | None = None, corrected_only: bool = Fa
     raise HTTPException(status_code=404, detail="Corrected-image review is available only in model mode")
   if not corrected_only and label not in runtime.labels:
     raise HTTPException(status_code=404, detail="Label is not configured")
-  return templates.TemplateResponse(request=request, name="review.html", context={"label": label, "labels": runtime.labels, "corrected_only": corrected_only, "can_edit": True})
+  context = {"label": label, "labels": runtime.labels, "corrected_only": corrected_only, "can_edit": True, "dashboard": []}
+  if corrected_only:
+    context["dashboard"] = model_dashboard(runtime)
+  return templates.TemplateResponse(request=request, name="review.html", context=context)
 
 
 @protected_pages.get("/review/items")

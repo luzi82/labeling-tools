@@ -13,7 +13,9 @@
     .card { background: #fffdf8; border: 1px solid #cbd7cc; padding: .75rem; } .card img { aspect-ratio: 1; display: block; object-fit: contain; width: 100%; }
     .card label { display: block; font-size: .9rem; font-weight: bold; margin: .75rem 0 .3rem; } .card select { box-sizing: border-box; padding: .45rem; width: 100%; }
     .state { font-size: .8rem; margin: .5rem 0 0; } .missing { align-items: center; aspect-ratio: 1; background: #f3e5df; color: #782f1f; display: flex; justify-content: center; padding: 1rem; text-align: center; }
-    #status { min-height: 1.5rem; } #sentinel { height: 1px; }
+    .label-section { margin-top: 2rem; } .label-section:first-of-type { margin-top: 0; } .label-section h2 { font-size: 1.2rem; margin: 0 0 .75rem; }
+    .empty { background: #fffdf8; border: 1px solid #cbd7cc; padding: 1rem; }
+    #status { min-height: 1.5rem; } .sentinel { height: 1px; }
   </style>
 </head>
 <body>
@@ -26,42 +28,53 @@
     </div>
   </header>
   <main>
-    <p id="status" role="status">Loading images...</p>
+    <p id="status" role="status">{% if corrected_only %}{% else %}Loading images...{% endif %}</p>
+    {% if corrected_only %}
+    {% set ns = namespace(has_groups=false) %}
+    {% for item in dashboard %}
+    {% if item.human_corrected > 0 %}
+    {% set ns.has_groups = true %}
+    <section class="label-section" data-label="{{ item.label }}" data-total="{{ item.human_corrected }}">
+      <h2>{{ item.label }} ({{ item.human_corrected }})</h2>
+      <div class="grid" aria-label="Corrected images labeled {{ item.label }}"></div>
+      <div class="sentinel"></div>
+    </section>
+    {% endif %}
+    {% endfor %}
+    {% if not ns.has_groups %}<section class="empty"><h2>No corrected images.</h2></section>{% endif %}
+    {% else %}
     <section class="grid" id="image-grid" aria-label="Images under review"></section>
-    <div id="sentinel"></div>
+    <div id="sentinel" class="sentinel"></div>
+    {% endif %}
   </main>
   <script>
     const currentLabel = {{ label | default(none) | tojson }};
     const correctedOnly = {{ corrected_only | tojson }};
     const labels = {{ labels | list | tojson }};
-    const grid = document.querySelector("#image-grid");
     const status = document.querySelector("#status");
-    const sentinel = document.querySelector("#sentinel");
-    let nextOffset = 0;
-    let hasMore = true;
-    let loading = false;
+    let mutating = false;
 
     async function undoLastChange() {
-      if (loading) return;
-      loading = true;
+      if (mutating) return;
+      mutating = true;
       try {
         const response = await fetch("/classifications/undo", { method: "POST" });
         if (!response.ok) throw new Error("Unable to undo the last action.");
         window.location.reload();
-      } catch (error) { status.textContent = error.message; loading = false; }
+      } catch (error) { status.textContent = error.message; mutating = false; }
     }
 
     async function completeReview() {
-      if (loading) return;
-      loading = true;
+      if (mutating) return;
+      mutating = true;
       try {
         const response = await fetch(`/review/complete?label=${encodeURIComponent(currentLabel)}`, { method: "POST" });
         if (!response.ok) throw new Error("Unable to complete the review.");
         window.location.assign("/");
-      } catch (error) { status.textContent = error.message; loading = false; }
+      } catch (error) { status.textContent = error.message; mutating = false; }
     }
 
-    function createCard(item) {
+    function createCard(item, onMovedAway) {
       const card = document.createElement("article");
       card.className = "card";
       if (item.missing) { card.innerHTML = '<div class="missing">Image file is missing or unavailable.</div>'; return card; }
@@ -78,7 +91,7 @@
         try {
           const response = await fetch("/classifications", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ image_path: item.image_path, label: select.value }) });
           if (!response.ok) throw new Error("Unable to update the label.");
-          if (!correctedOnly && select.value !== currentLabel) { card.remove(); nextOffset = Math.max(0, nextOffset - 1); }
+          if (onMovedAway && select.value !== item.label) { card.remove(); onMovedAway(); }
         } catch (error) { status.textContent = error.message; select.value = item.label; }
         finally { select.disabled = false; }
       });
@@ -90,24 +103,35 @@
       return card;
     }
 
-    async function loadItems() {
-      if (loading || !hasMore) return;
-      loading = true;
-      try {
-        const parameters = new URLSearchParams({ offset: nextOffset });
-        if (correctedOnly) parameters.set("corrected_only", "true"); else parameters.set("label", currentLabel);
-        const response = await fetch(`/review/items?${parameters}`);
-        if (!response.ok) throw new Error("Unable to load review images.");
-        const page = await response.json();
-        page.items.forEach((item) => grid.append(createCard(item)));
-        nextOffset = page.next_offset ?? nextOffset;
-        hasMore = page.has_more;
-        status.textContent = hasMore ? `Showing ${grid.children.length} of ${page.total} images.` : `Showing all ${grid.children.length} images.`;
-      } catch (error) { status.textContent = error.message; }
-      finally { loading = false; }
+    function bindLoader(grid, sentinel, buildParameters, onMovedAway, updateStatus) {
+      const loader = { nextOffset: 0, hasMore: true, loading: false };
+      async function loadItems() {
+        if (loader.loading || !loader.hasMore) return;
+        loader.loading = true;
+        try {
+          const parameters = buildParameters(loader.nextOffset);
+          const response = await fetch(`/review/items?${parameters}`);
+          if (!response.ok) throw new Error("Unable to load review images.");
+          const page = await response.json();
+          page.items.forEach((item) => grid.append(createCard(item, onMovedAway ? () => { loader.nextOffset = Math.max(0, loader.nextOffset - 1); } : null)));
+          loader.nextOffset = page.next_offset ?? loader.nextOffset;
+          loader.hasMore = page.has_more;
+          if (updateStatus) status.textContent = loader.hasMore ? `Showing ${grid.children.length} of ${page.total} images.` : `Showing all ${grid.children.length} images.`;
+        } catch (error) { status.textContent = error.message; }
+        finally { loader.loading = false; }
+      }
+      new IntersectionObserver((entries) => { if (entries.some((entry) => entry.isIntersecting)) loadItems(); }, { rootMargin: "600px" }).observe(sentinel);
     }
 
-    new IntersectionObserver((entries) => { if (entries.some((entry) => entry.isIntersecting)) loadItems(); }, { rootMargin: "600px" }).observe(sentinel);
+    if (correctedOnly) {
+      document.querySelectorAll(".label-section").forEach((section) => {
+        const label = section.dataset.label;
+        bindLoader(section.querySelector(".grid"), section.querySelector(".sentinel"), (offset) => new URLSearchParams({ offset, corrected_only: "true", label }), false, false);
+      });
+    } else {
+      bindLoader(document.querySelector("#image-grid"), document.querySelector("#sentinel"), (offset) => new URLSearchParams({ offset, label: currentLabel }), true, true);
+    }
+
     document.querySelector("#undo-button").addEventListener("click", undoLastChange);
     const completeButton = document.querySelector("#complete-button");
     if (completeButton) completeButton.addEventListener("click", completeReview);
