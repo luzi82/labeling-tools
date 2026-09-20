@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from compare.main import app, config, parse_startup_arguments
+from ordering.main import app, config, parse_startup_arguments
 
 
 class AuthenticationTests(unittest.TestCase):
