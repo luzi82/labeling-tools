@@ -60,7 +60,7 @@
         linear-gradient(#d8e2da 1px, transparent 1px),
         linear-gradient(90deg, #d8e2da 1px, transparent 1px);
       background-size: 24px 24px;
-      cursor: grab;
+      cursor: default;
       overflow: hidden;
       position: relative;
       min-height: 100vh;
@@ -435,7 +435,13 @@
       stopWorkspacePointer = stop;
     }
 
+    workspace.addEventListener("contextmenu", (event) => event.preventDefault());
     workspace.addEventListener("pointerdown", (event) => {
+      if (event.button === 2) {
+        endWorkspacePointer();
+        panWorkspace(event);
+        return;
+      }
       if (event.button !== 0) {
         return;
       }
@@ -443,7 +449,6 @@
 
       const workspaceItem = event.target.closest(".workspace-item");
       if (!workspaceItem) {
-        panWorkspace(event);
         return;
       }
 
