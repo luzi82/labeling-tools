@@ -30,7 +30,8 @@
     "source=/mnt/luzi82/88_luzi82_ro,target=/mnt/luzi82/88_luzi82_ro,type=bind,consistency=cached,readonly",
     "source=/mnt/luzi82/88_lzsmz_ro,target=/mnt/luzi82/88_lzsmz_ro,type=bind,consistency=cached,readonly",
     "source=/mnt/luzi82/88_luzi82_rw/project,target=/mnt/luzi82/88_luzi82_rw/project,type=bind,consistency=cached",
-    "source=${localWorkspaceFolder}/tmp/devcontainer_fs/home/vscode/.cache,target=/home/vscode/.cache,type=bind,consistency=cached"
+    "source=${localWorkspaceFolder}/tmp/devcontainer_fs/home/vscode/.cache,target=/home/vscode/.cache,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.ssh,target=/home/vscode/.ssh,type=bind,consistency=cached,readonly"
   ],
 
   "containerEnv": {
