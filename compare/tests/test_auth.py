@@ -113,7 +113,7 @@ class AuthenticationTests(unittest.TestCase):
             "y": 144.0,
         }])
 
-    def test_importing_images_returns_ten_bounded_images(self) -> None:
+    def test_importing_images_returns_twelve_bounded_images(self) -> None:
         with TemporaryDirectory() as directory:
             working_folder = Path(directory)
             image_folder = working_folder / "source-images"
@@ -145,7 +145,7 @@ class AuthenticationTests(unittest.TestCase):
                 app.state.working_folder = previous_working_folder
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.json()), 10)
+        self.assertEqual(len(response.json()), 12)
         for image in response.json():
             self.assertLessEqual(image["width"], 384)
             self.assertLessEqual(image["height"], 384)

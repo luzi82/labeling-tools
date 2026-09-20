@@ -64,6 +64,8 @@
       overflow: hidden;
       position: relative;
       min-height: 100vh;
+      touch-action: none;
+      user-select: none;
     }
 
     .workspace-layer {
@@ -150,6 +152,7 @@
     }
 
     .image-tile img {
+      -webkit-user-drag: none;
       display: block;
       height: 100%;
       object-fit: contain;
@@ -333,8 +336,8 @@
     function createImageTile(folderId, image, index) {
       const imageTile = document.createElement("div");
       const imageElement = document.createElement("img");
-      const column = index % 3;
-      const row = Math.floor(index / 3);
+      const column = index % 4;
+      const row = Math.floor(index / 4);
 
       imageTile.className = "image-tile workspace-item";
       imageTile.style.left = `${192 + column * 400}px`;
@@ -342,6 +345,7 @@
       imageTile.style.width = `${image.width}px`;
       imageTile.style.height = `${image.height}px`;
       imageElement.alt = "";
+      imageElement.draggable = false;
       imageElement.height = image.height;
       imageElement.src = `/image-folders/${folderId}/images/${encodeURIComponent(image.path)}`;
       imageElement.width = image.width;
@@ -382,15 +386,12 @@
 
     workspace.addEventListener("pointerdown", (event) => {
       const folderTile = event.target.closest(".folder-tile");
-      const workspaceItem = event.target.closest(".workspace-item");
       if (!folderTile) {
-        if (workspaceItem) {
-          return;
-        }
         panWorkspace(event);
         return;
       }
 
+      event.preventDefault();
       const tileBounds = folderTile.getBoundingClientRect();
       const pointerOffsetX = (event.clientX - tileBounds.left) / workspaceScale;
       const pointerOffsetY = (event.clientY - tileBounds.top) / workspaceScale;
@@ -428,6 +429,7 @@
     });
 
     function panWorkspace(event) {
+      event.preventDefault();
       let previousClientX = event.clientX;
       let previousClientY = event.clientY;
 

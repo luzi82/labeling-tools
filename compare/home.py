@@ -13,7 +13,7 @@ from starlette.templating import Jinja2Templates
 router = APIRouter()
 templates = Jinja2Templates(directory=Path(__file__).with_name("templates"))
 IMAGE_EXTENSIONS = {".gif", ".jpeg", ".jpg", ".png", ".webp"}
-IMPORT_IMAGE_COUNT = 10
+IMPORT_IMAGE_COUNT = 12
 MAX_IMAGE_DIMENSION = 384
 TARGET_IMAGE_AREA = 65_536
 
