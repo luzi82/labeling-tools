@@ -66,6 +66,15 @@
       min-height: 100vh;
     }
 
+    .workspace-layer {
+      height: 0;
+      left: 0;
+      position: absolute;
+      top: 0;
+      transform-origin: 0 0;
+      width: 0;
+    }
+
     .folder-tile {
       align-items: center;
       background: #fffdf8;
@@ -216,7 +225,9 @@
       <button type="submit">Log out</button>
     </form>
   </aside>
-  <main class="grid-space" aria-label="Workspace"></main>
+  <main class="grid-space" aria-label="Workspace">
+    <div class="workspace-layer"></div>
+  </main>
   <dialog id="add-images-folder-dialog" aria-labelledby="add-images-folder-title">
     <form method="dialog">
       <h2 id="add-images-folder-title">Add images folder</h2>
@@ -235,9 +246,21 @@
     const addImagesFolderDialog = document.querySelector("#add-images-folder-dialog");
     const cancelImportButton = document.querySelector("[data-dialog-cancel]");
     const addImagesFolderForm = addImagesFolderDialog.querySelector("form");
+    const GRID_SIZE = 24;
+    const MIN_WORKSPACE_SCALE = .25;
+    const MAX_WORKSPACE_SCALE = 4;
+    const ZOOM_FACTOR = 1.1;
     const workspace = document.querySelector(".grid-space");
+    const workspaceLayer = document.querySelector(".workspace-layer");
     let workspaceOffsetX = 0;
     let workspaceOffsetY = 0;
+    let workspaceScale = 1;
+
+    function applyWorkspaceCamera() {
+      workspace.style.backgroundSize = `${GRID_SIZE * workspaceScale}px ${GRID_SIZE * workspaceScale}px`;
+      workspace.style.backgroundPosition = `${workspaceOffsetX}px ${workspaceOffsetY}px`;
+      workspaceLayer.style.transform = `translate(${workspaceOffsetX}px, ${workspaceOffsetY}px) scale(${workspaceScale})`;
+    }
 
     addImagesFolderButton.addEventListener("click", () => addImagesFolderDialog.showModal());
     cancelImportButton.addEventListener("click", () => addImagesFolderDialog.close());
@@ -245,8 +268,8 @@
       event.preventDefault();
       const labelInput = addImagesFolderForm.elements.label;
       const pathInput = addImagesFolderForm.elements.path;
-      const x = 32;
-      const y = 32;
+      const x = (32 - workspaceOffsetX) / workspaceScale;
+      const y = (32 - workspaceOffsetY) / workspaceScale;
 
       const response = await fetch("/image-folders", {
         body: JSON.stringify({ label: labelInput.value, path: pathInput.value, x, y }),
@@ -295,7 +318,7 @@
       importButton.addEventListener("pointerdown", (event) => event.stopPropagation());
       importButton.addEventListener("click", () => importFolderImages(imageFolder.uuid));
       folderTile.append(folderIcon, folderLabel, importButton);
-      workspace.append(folderTile);
+      workspaceLayer.append(folderTile);
     }
 
     async function importFolderImages(folderId) {
@@ -323,10 +346,39 @@
       imageElement.src = `/image-folders/${folderId}/images/${encodeURIComponent(image.path)}`;
       imageElement.width = image.width;
       imageTile.append(imageElement);
-      workspace.append(imageTile);
+      workspaceLayer.append(imageTile);
     }
 
     loadImageFolders();
+    applyWorkspaceCamera();
+
+    workspace.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      if (event.deltaY === 0) {
+        return;
+      }
+
+      const workspaceBounds = workspace.getBoundingClientRect();
+      const cursorX = event.clientX - workspaceBounds.left;
+      const cursorY = event.clientY - workspaceBounds.top;
+      const worldX = (cursorX - workspaceOffsetX) / workspaceScale;
+      const worldY = (cursorY - workspaceOffsetY) / workspaceScale;
+      const nextScale = Math.min(
+        MAX_WORKSPACE_SCALE,
+        Math.max(
+          MIN_WORKSPACE_SCALE,
+          workspaceScale * (event.deltaY < 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR),
+        ),
+      );
+      if (nextScale === workspaceScale) {
+        return;
+      }
+
+      workspaceScale = nextScale;
+      workspaceOffsetX = cursorX - worldX * workspaceScale;
+      workspaceOffsetY = cursorY - worldY * workspaceScale;
+      applyWorkspaceCamera();
+    }, { passive: false });
 
     workspace.addEventListener("pointerdown", (event) => {
       const folderTile = event.target.closest(".folder-tile");
@@ -339,10 +391,9 @@
         return;
       }
 
-      const workspaceBounds = workspace.getBoundingClientRect();
       const tileBounds = folderTile.getBoundingClientRect();
-      const pointerOffsetX = event.clientX - tileBounds.left;
-      const pointerOffsetY = event.clientY - tileBounds.top;
+      const pointerOffsetX = (event.clientX - tileBounds.left) / workspaceScale;
+      const pointerOffsetY = (event.clientY - tileBounds.top) / workspaceScale;
 
       folderTile.setPointerCapture(event.pointerId);
       folderTile.addEventListener("pointermove", moveFolderTile);
@@ -350,10 +401,21 @@
       folderTile.addEventListener("pointercancel", stopMovingFolderTile, { once: true });
 
       function moveFolderTile(moveEvent) {
-        const maximumLeft = workspaceBounds.width - folderTile.offsetWidth;
-        const maximumTop = workspaceBounds.height - folderTile.offsetHeight;
-        const left = Math.max(0, Math.min(maximumLeft, moveEvent.clientX - workspaceBounds.left - pointerOffsetX));
-        const top = Math.max(0, Math.min(maximumTop, moveEvent.clientY - workspaceBounds.top - pointerOffsetY));
+        const workspaceBounds = workspace.getBoundingClientRect();
+        const visibleLeft = -workspaceOffsetX / workspaceScale;
+        const visibleTop = -workspaceOffsetY / workspaceScale;
+        const visibleWidth = workspaceBounds.width / workspaceScale;
+        const visibleHeight = workspaceBounds.height / workspaceScale;
+        const worldX = (moveEvent.clientX - workspaceBounds.left - workspaceOffsetX) / workspaceScale - pointerOffsetX;
+        const worldY = (moveEvent.clientY - workspaceBounds.top - workspaceOffsetY) / workspaceScale - pointerOffsetY;
+        const left = Math.max(
+          visibleLeft,
+          Math.min(visibleLeft + visibleWidth - folderTile.offsetWidth, worldX),
+        );
+        const top = Math.max(
+          visibleTop,
+          Math.min(visibleTop + visibleHeight - folderTile.offsetHeight, worldY),
+        );
 
         folderTile.style.left = `${left}px`;
         folderTile.style.top = `${top}px`;
@@ -376,16 +438,9 @@
       workspace.addEventListener("pointercancel", stopPanningWorkspace, { once: true });
 
       function moveWorkspace(moveEvent) {
-        const deltaX = moveEvent.clientX - previousClientX;
-        const deltaY = moveEvent.clientY - previousClientY;
-
-        workspaceOffsetX += deltaX;
-        workspaceOffsetY += deltaY;
-        workspace.style.backgroundPosition = `${workspaceOffsetX}px ${workspaceOffsetY}px`;
-        workspace.querySelectorAll(".workspace-item").forEach((tile) => {
-          tile.style.left = `${tile.offsetLeft + deltaX}px`;
-          tile.style.top = `${tile.offsetTop + deltaY}px`;
-        });
+        workspaceOffsetX += moveEvent.clientX - previousClientX;
+        workspaceOffsetY += moveEvent.clientY - previousClientY;
+        applyWorkspaceCamera();
         previousClientX = moveEvent.clientX;
         previousClientY = moveEvent.clientY;
       }
