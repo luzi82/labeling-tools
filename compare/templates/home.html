@@ -147,8 +147,14 @@
       border: 1px solid #879b89;
       box-shadow: 0 3px 8px #17261d1c;
       box-sizing: border-box;
+      cursor: grab;
       line-height: 0;
       position: absolute;
+      touch-action: none;
+    }
+
+    .image-tile:active {
+      cursor: grabbing;
     }
 
     .image-tile img {
@@ -384,47 +390,85 @@
       applyWorkspaceCamera();
     }, { passive: false });
 
+    let stopWorkspacePointer = null;
+
+    function endWorkspacePointer() {
+      if (stopWorkspacePointer === null) {
+        return;
+      }
+      const stop = stopWorkspacePointer;
+      stopWorkspacePointer = null;
+      stop();
+    }
+
+    function listenForWorkspacePointer(pointerId, onMove, onStop) {
+      function move(moveEvent) {
+        if (moveEvent.pointerId !== pointerId) {
+          return;
+        }
+        if (moveEvent.buttons === 0) {
+          stop();
+          return;
+        }
+        onMove(moveEvent);
+      }
+
+      function stop(stopEvent) {
+        if (stopEvent && stopEvent.pointerId !== undefined && stopEvent.pointerId !== pointerId) {
+          return;
+        }
+        stopWorkspacePointer = null;
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", stop);
+        window.removeEventListener("pointercancel", stop);
+        window.removeEventListener("blur", stop);
+        onStop();
+      }
+
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", stop);
+      window.addEventListener("pointercancel", stop);
+      window.addEventListener("blur", stop);
+      stopWorkspacePointer = stop;
+    }
+
     workspace.addEventListener("pointerdown", (event) => {
-      const folderTile = event.target.closest(".folder-tile");
-      if (!folderTile) {
+      if (event.button !== 0) {
+        return;
+      }
+      endWorkspacePointer();
+
+      const workspaceItem = event.target.closest(".workspace-item");
+      if (!workspaceItem) {
         panWorkspace(event);
         return;
       }
 
       event.preventDefault();
-      const tileBounds = folderTile.getBoundingClientRect();
+      const tileBounds = workspaceItem.getBoundingClientRect();
       const pointerOffsetX = (event.clientX - tileBounds.left) / workspaceScale;
       const pointerOffsetY = (event.clientY - tileBounds.top) / workspaceScale;
-
-      folderTile.setPointerCapture(event.pointerId);
-      folderTile.addEventListener("pointermove", moveFolderTile);
-      folderTile.addEventListener("pointerup", stopMovingFolderTile, { once: true });
-      folderTile.addEventListener("pointercancel", stopMovingFolderTile, { once: true });
-
-      function moveFolderTile(moveEvent) {
-        const workspaceBounds = workspace.getBoundingClientRect();
-        const visibleLeft = -workspaceOffsetX / workspaceScale;
-        const visibleTop = -workspaceOffsetY / workspaceScale;
-        const visibleWidth = workspaceBounds.width / workspaceScale;
-        const visibleHeight = workspaceBounds.height / workspaceScale;
-        const worldX = (moveEvent.clientX - workspaceBounds.left - workspaceOffsetX) / workspaceScale - pointerOffsetX;
-        const worldY = (moveEvent.clientY - workspaceBounds.top - workspaceOffsetY) / workspaceScale - pointerOffsetY;
-        const left = Math.max(
-          visibleLeft,
-          Math.min(visibleLeft + visibleWidth - folderTile.offsetWidth, worldX),
-        );
-        const top = Math.max(
-          visibleTop,
-          Math.min(visibleTop + visibleHeight - folderTile.offsetHeight, worldY),
-        );
-
-        folderTile.style.left = `${left}px`;
-        folderTile.style.top = `${top}px`;
+      try {
+        workspaceItem.setPointerCapture(event.pointerId);
+      } catch {
       }
 
-      function stopMovingFolderTile(stopEvent) {
-        folderTile.releasePointerCapture(stopEvent.pointerId);
-        folderTile.removeEventListener("pointermove", moveFolderTile);
+      listenForWorkspacePointer(event.pointerId, moveWorkspaceItem, stopMovingWorkspaceItem);
+
+      function moveWorkspaceItem(moveEvent) {
+        const workspaceBounds = workspace.getBoundingClientRect();
+        const worldX = (moveEvent.clientX - workspaceBounds.left - workspaceOffsetX) / workspaceScale - pointerOffsetX;
+        const worldY = (moveEvent.clientY - workspaceBounds.top - workspaceOffsetY) / workspaceScale - pointerOffsetY;
+
+        workspaceItem.style.left = `${worldX}px`;
+        workspaceItem.style.top = `${worldY}px`;
+      }
+
+      function stopMovingWorkspaceItem() {
+        try {
+          workspaceItem.releasePointerCapture(event.pointerId);
+        } catch {
+        }
       }
     });
 
@@ -434,10 +478,11 @@
       let previousClientY = event.clientY;
 
       workspace.classList.add("is-panning");
-      workspace.setPointerCapture(event.pointerId);
-      workspace.addEventListener("pointermove", moveWorkspace);
-      workspace.addEventListener("pointerup", stopPanningWorkspace, { once: true });
-      workspace.addEventListener("pointercancel", stopPanningWorkspace, { once: true });
+      try {
+        workspace.setPointerCapture(event.pointerId);
+      } catch {
+      }
+      listenForWorkspacePointer(event.pointerId, moveWorkspace, stopPanningWorkspace);
 
       function moveWorkspace(moveEvent) {
         workspaceOffsetX += moveEvent.clientX - previousClientX;
@@ -447,10 +492,12 @@
         previousClientY = moveEvent.clientY;
       }
 
-      function stopPanningWorkspace(stopEvent) {
+      function stopPanningWorkspace() {
         workspace.classList.remove("is-panning");
-        workspace.releasePointerCapture(stopEvent.pointerId);
-        workspace.removeEventListener("pointermove", moveWorkspace);
+        try {
+          workspace.releasePointerCapture(event.pointerId);
+        } catch {
+        }
       }
     }
   </script>

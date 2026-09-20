@@ -42,7 +42,9 @@ class AuthenticationTests(unittest.TestCase):
         self.assertIn("function panWorkspace", response.text)
         self.assertIn('textContent = "Import"', response.text)
         self.assertIn('className = "image-tile workspace-item"', response.text)
-        self.assertIn('querySelectorAll(".workspace-item")', response.text)
+        self.assertIn('closest(".workspace-item")', response.text)
+        self.assertIn("moveEvent.buttons === 0", response.text)
+        self.assertIn("function listenForWorkspacePointer", response.text)
 
     def test_working_folder_argument_resolves_directory(self) -> None:
         with TemporaryDirectory() as directory:
