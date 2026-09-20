@@ -325,29 +325,32 @@
       importButton.type = "button";
       importButton.textContent = "Import";
       importButton.addEventListener("pointerdown", (event) => event.stopPropagation());
-      importButton.addEventListener("click", () => importFolderImages(imageFolder.uuid));
+      importButton.addEventListener("click", () => importFolderImages(folderTile));
       folderTile.append(folderIcon, folderLabel, importButton);
       workspaceLayer.append(folderTile);
     }
 
-    async function importFolderImages(folderId) {
+    async function importFolderImages(folderTile) {
+      const folderId = folderTile.dataset.uuid;
       const response = await fetch(`/image-folders/${folderId}/import`, { method: "POST" });
       if (!response.ok) {
         return;
       }
       const images = await response.json();
-      images.forEach((image, index) => createImageTile(folderId, image, index));
+      const originX = Number.parseFloat(folderTile.style.left) + folderTile.offsetWidth + GRID_SIZE;
+      const originY = Number.parseFloat(folderTile.style.top);
+      images.forEach((image, index) => createImageTile(folderId, image, index, originX, originY));
     }
 
-    function createImageTile(folderId, image, index) {
+    function createImageTile(folderId, image, index, originX, originY) {
       const imageTile = document.createElement("div");
       const imageElement = document.createElement("img");
       const column = index % 4;
       const row = Math.floor(index / 4);
 
       imageTile.className = "image-tile workspace-item";
-      imageTile.style.left = `${192 + column * 400}px`;
-      imageTile.style.top = `${32 + row * 400}px`;
+      imageTile.style.left = `${originX + column * 400}px`;
+      imageTile.style.top = `${originY + row * 400}px`;
       imageTile.style.width = `${image.width}px`;
       imageTile.style.height = `${image.height}px`;
       imageElement.alt = "";
