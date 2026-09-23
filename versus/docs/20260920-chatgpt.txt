@@ -1,0 +1,688 @@
+可以。你要做的其實不是傳統「圖片分類器」，而是 **Personalized Image Aesthetic Preference Model**：輸入圖片，輸出「這張圖有多符合你的口味」。
+
+我查過近年的研究後，最適合你實作的第一版是：
+
+> **Pretrained vision encoder → 個人化 aesthetic scorer → 用 pairwise preference 訓練**
+
+而不是拿幾百張圖直接 fine-tune 一整頭 ViT。那種做法比較像用火箭送外賣，技術上很有氣勢，資料不足時結果通常只是在昂貴地 overfit。
+
+### 我會這樣設計
+
+```text
+                    ┌───────────────┐
+Image ─────────────►│ SigLIP2       │
+                    │ vision encoder│
+                    └───────┬───────┘
+                            │ embedding
+                            ▼
+                     ┌────────────┐
+                     │ small MLP  │
+                     │ preference │
+                     │ head       │
+                     └─────┬──────┘
+                           │
+                           ▼
+                     aesthetic score
+                       -∞ ... +∞
+```
+
+其實 LAION 的著名 aesthetic predictor 本身就是非常相似的思路：**CLIP embedding + linear aesthetic estimator**。([GitHub][1])
+
+差別是 LAION 那個模型學的是「一般人的審美」，你這個 head 學的是 **你的審美**。而研究亦一直發現，generic aesthetic ground truth 並不能很好代表每個人的主觀偏好，所以這個 personal head 很有意義。([AAAI Publications][2])
+
+## 最重要的一點：不要叫自己打 1～10 分
+
+我建議 UI 每次顯示兩張：
+
+```text
+       A                         B
+
+   [ image ]                [ image ]
+
+
+   A 比較好看
+   差不多
+   B 比較好看
+   Skip
+```
+
+這比：
+
+> 「這張圖你給幾多分？」
+
+容易得多，而且標籤穩定得多。
+
+近期 CVPR 2026 的 personalized photographic style 工作也是直接採用 **pairwise user preference**；他們的資料集有 767 位使用者，每位平均做約 70 個 pairwise comparisons。當然，那篇集中在 photographic style，不代表 70 次選擇就足以學會你宇宙級複雜的整體審美，但方向非常吻合。([Open Access CVF][3])
+
+更早的 personalized aesthetics 工作同樣採用 pairwise ranking，再以 ranking loss 去個人化模型。([Springer][4])
+
+---
+
+## Training loss 其實非常簡單
+
+假設：
+
+```text
+score_A = model(A)
+score_B = model(B)
+```
+
+我們希望：
+
+```text
+如果你喜歡 A：
+score_A > score_B
+
+如果你喜歡 B：
+score_B > score_A
+```
+
+可以直接用 Bradley-Terry / logistic ranking：
+
+$$
+P(A>B)=\sigma(s_A-s_B)
+$$
+
+PyTorch 差不多就是：
+
+```python
+score_a = model(feature_a)
+score_b = model(feature_b)
+
+logit = score_a - score_b
+
+# 1 = A preferred
+# 0 = B preferred
+loss = torch.nn.functional.binary_cross_entropy_with_logits(
+    logit,
+    target
+)
+```
+
+而「差不多」甚至可以：
+
+```python
+target = 0.5
+```
+
+或者第一版乾脆把 tie 排除。
+
+這樣訓練完之後，雖然你從來沒有給圖片「8.3 分」，模型仍自然得到一個 scalar score，可以拿來排列：
+
+```text
+image_018.jpg    +4.28
+image_936.jpg    +3.91
+image_551.jpg    +3.72
+...
+image_317.jpg    -2.41
+```
+
+這正是你之後實際最需要的東西。
+
+---
+
+# Backbone 我會選甚麼
+
+第一版我會先用：
+
+**SigLIP2 So400m patch14 384**
+
+Google 在 2025 推出的 SigLIP2，本身是 vision-language representation model，改善了 image-text retrieval、zero-shot classification 和 transfer learning，而且有 86M、303M、400M、1B 等尺寸。Hugging Face 已原生支援直接抽 `get_image_features()`。([arXiv][5])
+
+例如：
+
+```python
+import torch
+from transformers import AutoModel, AutoProcessor
+from PIL import Image
+
+device = "cuda"
+
+name = "google/siglip2-so400m-patch14-384"
+
+model = AutoModel.from_pretrained(
+    name,
+    torch_dtype=torch.bfloat16,
+).to(device)
+
+processor = AutoProcessor.from_pretrained(name)
+
+model.eval()
+
+image = Image.open("test.png").convert("RGB")
+
+inputs = processor(
+    images=image,
+    return_tensors="pt"
+).to(device)
+
+with torch.no_grad():
+    feature = model.get_image_features(**inputs)
+
+feature = feature.float()
+```
+
+這個用法與 Hugging Face 官方文件一致。([Hugging Face][6])
+
+然後**不要每個 epoch 重跑 SigLIP2**。
+
+第一次：
+
+```text
+10000 images
+      ↓
+SigLIP2
+      ↓
+10000 embeddings
+      ↓
+embeddings.pt
+```
+
+之後訓練只讀 embedding。
+
+所以 scorer 訓練會快得荒謬。
+
+---
+
+# Scorer 可以小到離譜
+
+例如：
+
+```python
+class AestheticHead(torch.nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.net = torch.nn.Sequential(
+            torch.nn.LayerNorm(dim),
+            torch.nn.Linear(dim, 512),
+            torch.nn.GELU(),
+            torch.nn.Dropout(0.2),
+            torch.nn.Linear(512, 128),
+            torch.nn.GELU(),
+            torch.nn.Linear(128, 1),
+        )
+
+    def forward(self, x):
+        return self.net(x).squeeze(-1)
+```
+
+真正 train 的可能就幾十萬 parameters。
+
+所以你現有的 GPU 根本不是瓶頸。真正昂貴的資源是：
+
+> **你的手指要按多少次 A / B。**
+
+人類再次成功成為 AI pipeline 最慢的 component。
+
+---
+
+# 我會怎樣收集 dataset
+
+資料格式甚至可以只是：
+
+```csv
+left,right,result
+000001.jpg,000002.jpg,A
+000013.jpg,000021.jpg,B
+000031.jpg,000077.jpg,A
+000092.jpg,000103.jpg,TIE
+```
+
+但我會加：
+
+```csv
+left,right,result,group,source
+a.png,b.png,A,portrait_002,flux
+c.png,d.png,B,landscape_018,midjourney
+```
+
+`group` 很有用。
+
+例如四張都是：
+
+> 白髮動漫少女、同一 prompt、不同行為或構圖
+
+把它們列為同一 group。
+
+因為這類比較才能迫使模型學：
+
+```text
+構圖
+比例
+眼睛
+線條
+色彩
+光影
+角色設計
+細節密度
+```
+
+而不是偷懶學成：
+
+```text
+「主人喜歡白髮少女。」
+```
+
+這個問題非常重要。
+
+---
+
+# 我會故意混合三種 pair
+
+我的實作比例會大概是：
+
+| Pair 類型             |  比例 | 目的                   |
+| ------------------- | --: | -------------------- |
+| 不同圖片 random pair    | 40% | 學大的審美方向              |
+| 同主題 / 同 prompt pair | 40% | 學真正視覺品質              |
+| Hard pair           | 20% | 精修 decision boundary |
+
+Hard pair 就是模型認為：
+
+```text
+score(A) ≈ score(B)
+```
+
+的圖片。
+
+例如：
+
+```text
+A = 3.812
+B = 3.806
+```
+
+系統便問你：
+
+> 哪張比較好？
+
+這叫 **active learning**。
+
+如此一來，你不用永無止境評圖。
+
+---
+
+# Dataset 大概要幾多？
+
+這部分沒有神奇固定數字，以下是我會用的工程估算，而不是論文定律：
+
+| comparisons | 大致用途           |
+| ----------: | -------------- |
+|     100～300 | 驗證 idea 是否可行   |
+|   500～1,000 | 開始有明顯「你的味道」    |
+| 2,000～5,000 | 相當實用           |
+|     10,000+ | 可以開始學很細微、跨題材偏好 |
+
+關鍵是 **diversity > 數量**。
+
+如果你給：
+
+```text
+5000 張動漫少女
+```
+
+模型大概會很懂你喜歡哪種動漫少女。
+
+但突然給它：
+
+```text
+建築攝影
+```
+
+它就開始精神恍惚。
+
+所以如果你的真正目標是：
+
+> 「任何圖片都像我本人去看一樣判斷」
+
+dataset 就要刻意包括：
+
+```text
+anime
+illustration
+photo
+portrait
+landscape
+architecture
+3D
+abstract
+dark art
+cute art
+realistic
+minimalist
+...
+```
+
+---
+
+# 更進一步，我其實會用兩個 encoder
+
+如果做第二版，我會測：
+
+```text
+SigLIP2 feature ──┐
+                  ├── concat ──► preference MLP ──► score
+DINOv3 feature ───┘
+```
+
+SigLIP2 比較偏 semantic / vision-language representation。
+
+DINOv3 則是很強的純 visual representation。Meta 在 2025 推出 DINOv3，特別強調 frozen backbone 可以配 lightweight adapters 做 downstream vision tasks，而且訓練資料規模達 17 億張圖片。([Meta AI][7])
+
+換句話說，一邊比較容易知道：
+
+```text
+「這是 Gothic Lolita」
+「這是城市夜景」
+```
+
+另一邊可以補：
+
+```text
+texture
+shape
+composition
+visual structure
+```
+
+不過我**不會第一日就做雙 encoder**。
+
+先跑：
+
+```text
+SigLIP2
+   +
+MLP
+```
+
+建立 baseline。
+
+如果 validation accuracy 已經 80% 多，那再加一頭 7B DINO 恐龍也只是滿足人類對複雜架構的宗教需求。
+
+---
+
+# Validation 要特別小心
+
+不要純粹：
+
+```python
+random_split(dataset, 0.8, 0.2)
+```
+
+否則可能出現：
+
+```text
+train:
+portrait_A vs portrait_B
+
+test:
+portrait_A vs portrait_C
+```
+
+模型早就看過 A。
+
+結果 test score 漂亮得令人心花怒放，但全是作弊。
+
+應該按：
+
+```text
+image group / prompt / generation batch
+```
+
+split。
+
+例如：
+
+```text
+train groups: 80%
+validation groups: 10%
+test groups: 10%
+```
+
+整個 group 只能出現在一邊。
+
+---
+
+# 評估 metric
+
+最直接：
+
+### Pairwise accuracy
+
+```text
+你選 A
+model 亦 score(A) > score(B)
+
+= correct
+```
+
+例如：
+
+```text
+test accuracy = 84.7%
+```
+
+非常直觀。
+
+另外可以測：
+
+```text
+Spearman correlation
+Kendall tau
+```
+
+如果你另外把一批圖片完整排序，這兩個 metric 很適合。
+
+---
+
+# 然後加入 Active Learning
+
+做到這裡，整套系統會變得很好玩：
+
+```text
+           ┌───────────────┐
+           │ image pool    │
+           └───────┬───────┘
+                   ↓
+           aesthetic model
+                   ↓
+       找 uncertain / useful pairs
+                   ↓
+            顯示 A vs B
+                   ↓
+                你選
+                   ↓
+             加入 dataset
+                   ↓
+               retrain
+                   ↺
+```
+
+例如每次：
+
+```text
+50 pairs
+```
+
+大概按一兩分鐘。
+
+累積：
+
+```text
+Day 1    300
+Day 5    700
+Day 20   2000
+```
+
+你的 scorer 就會逐漸變成某種數碼版「你的挑剔眼光」。
+
+---
+
+# 我甚至建議保留「原因」
+
+UI 可以多一個**非必要**選項：
+
+```text
+為甚麼選 A？
+
+[構圖]
+[角色]
+[色彩]
+[畫風]
+[光影]
+[細節]
+[氣氛]
+[不知道，就是比較喜歡]
+```
+
+不要求每次填。
+
+這些 metadata 日後非常有價值。
+
+因為第二階段你可以把單一：
+
+```text
+score = 8.3
+```
+
+升級為：
+
+```json
+{
+  "overall": 8.3,
+  "composition": 7.5,
+  "color": 9.2,
+  "character": 8.8,
+  "lighting": 7.1,
+  "style": 9.4
+}
+```
+
+近年的 personalized preference research 也正朝向 **multi-dimensional preference profile** 發展，而不只是單一 generic score。([arXiv][8])
+
+---
+
+# 不要一開始拿 scorer 去 RL 圖像生成器
+
+理論上，你最後可以：
+
+```text
+image generator
+       ↓
+generated image
+       ↓
+YourAestheticModel
+       ↓
+reward
+       ↓
+train generator
+```
+
+ImageReward 已展示過用 human-preference reward model 回饋 text-to-image generator 的方向。([arXiv][9])
+
+但你的第一階段應該只是：
+
+```text
+生成 32 張圖
+       ↓
+personal aesthetic scorer
+       ↓
+排序
+       ↓
+只顯示 top 4
+```
+
+即 **Best-of-N reranking**。
+
+這安全得多。
+
+不然 generator 很容易發現某些奇怪 trick：
+
+```text
+奇怪飽和度 + 某種構圖
+→ scorer = 999
+```
+
+然後開始生成一些只有神經網絡自己覺得是藝術的東西。Reward hacking，AI 的古老傳統。
+
+---
+
+# 以你的情況，我會實作成這樣
+
+```text
+personal-aesthetic/
+│
+├── images/
+│
+├── data/
+│   └── comparisons.sqlite
+│
+├── encoder/
+│   └── siglip2.py
+│
+├── features/
+│   └── *.pt
+│
+├── model/
+│   └── ranker.py
+│
+├── train.py
+├── evaluate.py
+├── score.py
+│
+└── webui/
+    └── A / B preference UI
+```
+
+技術棧：
+
+```text
+Python
+PyTorch
+Transformers
+SigLIP2
+SQLite
+
+Web UI:
+FastAPI
++
+簡單 HTML/JS
+```
+
+流程：
+
+```text
+① 塞幾千張圖片
+
+② SigLIP2 預先抽 embedding
+
+③ Web UI 不斷顯示 A / B
+
+④ 你累積約 500 pairs
+
+⑤ train pairwise preference head
+
+⑥ model 開始主動選 difficult pairs
+
+⑦ 累積至 2k～5k
+
+⑧ 測 unseen images
+
+⑨ 如果效果仍遇到 feature ceiling
+   → 再試 DINOv3
+   → 或 LoRA / unfreeze SigLIP2 最後幾層
+```
+
+在你現有的 GB10 上，甚至到後面解凍 vision backbone 或做 LoRA 都完全有條件玩；但第一版我仍然會**刻意 freeze backbone**，因為問題不是 GPU 不夠，而是你的個人標籤數量遠遠少於 foundation model 原本見過的資料。([Hugging Face][6])
+
+**所以最值得先做的 MVP，就是 `SigLIP2 embeddings + pairwise MLP ranker + A/B Web UI + active learning`。** 這個版本程式不大，卻已經可以真正測出「AI 能否學懂你的眼光」。
+
+[1]: https://github.com/LAION-AI/aesthetic-predictor?utm_source=chatgpt.com "GitHub - LAION-AI/aesthetic-predictor: A linear estimator on top of clip to predict the aesthetic quality of pictures · GitHub"
+[2]: https://ojs.aaai.org/index.php/AAAI/article/view/26395?utm_source=chatgpt.com "Correct for Whom? Subjectivity and the Evaluation of Personalized Image Aesthetics Assessment Models | Proceedings of the AAAI Conference on Artificial Intelligence"
+[3]: https://openaccess.thecvf.com/content/CVPR2026/html/Kim_Learning_Personalized_Photographic_Style_from_Pairwise_User_Preferences_CVPR_2026_paper.html?utm_source=chatgpt.com "CVPR 2026 Open Access Repository"
+[4]: https://link.springer.com/article/10.1007/s41095-021-0207-y?utm_source=chatgpt.com "Joint regression and learning from pairwise rankings for personalized image aesthetic assessment | Computational Visual Media | Springer Nature Link"
+[5]: https://arxiv.org/abs/2502.14786?utm_source=chatgpt.com "SigLIP 2: Multilingual Vision-Language Encoders with Improved Semantic Understanding, Localization, and Dense Features"
+[6]: https://huggingface.co/docs/transformers/v5.5.0/en/model_doc/siglip2 "SigLIP2 · Hugging Face"
+[7]: https://ai.meta.com/blog/dinov3-self-supervised-vision-model/?utm_source=chatgpt.com "DINOv3: Self-supervised learning for vision at unprecedented scale"
+[8]: https://arxiv.org/abs/2511.00609?utm_source=chatgpt.com "PreferThinker: Reasoning-based Personalized Image Preference Assessment"
+[9]: https://arxiv.org/abs/2304.05977?utm_source=chatgpt.com "ImageReward: Learning and Evaluating Human Preferences for Text-to-Image Generation"
