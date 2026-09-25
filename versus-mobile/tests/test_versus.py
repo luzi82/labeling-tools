@@ -47,6 +47,10 @@ class ComparisonTests(unittest.TestCase):
       paths.append(image_path.resolve())
     return paths
 
+  def excluded_images_of(self, runtime) -> list[str]:
+    with (runtime.output_folder / "excluded.csv").open(newline="", encoding="utf-8") as csv_file:
+      return [row["image"] for row in csv.DictReader(csv_file)]
+
   def pair_from(self, page: str) -> tuple[str, str] | None:
     if 'data-state="done"' in page:
       return None
@@ -149,6 +153,139 @@ class ComparisonTests(unittest.TestCase):
     self.assertEqual(missing.status_code, 404)
     with (versus_mobile.result_path(app.state.runtime)).open(newline="", encoding="utf-8") as csv_file:
       self.assertEqual(tuple(csv.DictReader(csv_file).fieldnames or ()), ("image_a", "image_b", "result"))
+
+  def test_excluding_one_image_keeps_the_other_in_place(self) -> None:
+    runtime, _images = self.open_runtime(4)
+    first_page = self.client.get("/")
+    first = self.pair_from(first_page.text)
+    assert first is not None
+    self.assertIn('class="exclude exclude-a" method="post"', first_page.text)
+    self.assertIn(">A</button>", first_page.text)
+    self.assertIn('class="exclude exclude-b" method="post"', first_page.text)
+    self.assertIn(">B</button>", first_page.text)
+
+    excluded = self.client.post("/exclusions", data={"image": first[0]})
+    second = self.pair_from(self.client.get("/").text)
+
+    self.assertEqual(excluded.status_code, 303)
+    self.assertIsNotNone(second)
+    assert second is not None
+    self.assertEqual(second[1], first[1])
+    self.assertNotEqual(second[0], first[0])
+    self.assertEqual(read_rows(runtime), [])
+    self.assertEqual(self.excluded_images_of(runtime), [first[0]])
+
+  def test_excluded_image_is_not_compared_later(self) -> None:
+    runtime, _images = self.open_runtime(5)
+    first = self.pair_from(self.client.get("/").text)
+    assert first is not None
+    self.client.post("/exclusions", data={"image": first[0]})
+    second = self.pair_from(self.client.get("/").text)
+    assert second is not None
+    self.client.post("/comparisons", data={"image_a": second[0], "image_b": second[1], "result": "A>B"})
+    third = self.pair_from(self.client.get("/").text)
+
+    self.assertIsNotNone(third)
+    assert third is not None
+    self.assertNotIn(first[0], second)
+    self.assertNotIn(first[0], third)
+    self.assertTrue(all(first[0] not in (row["image_a"], row["image_b"]) for row in read_rows(runtime)))
+
+  def test_excluding_the_last_opponent_leaves_the_other_image_unused(self) -> None:
+    runtime, _images = self.open_runtime(2)
+    first = self.pair_from(self.client.get("/").text)
+    assert first is not None
+    self.client.post("/exclusions", data={"image": first[1]})
+    page = self.client.get("/")
+
+    self.assertIn('data-state="done"', page.text)
+    self.assertIn("No pairs left.", page.text)
+    self.assertEqual(self.excluded_images_of(runtime), [first[1]])
+
+  def test_cannot_exclude_an_image_outside_the_current_pair(self) -> None:
+    _runtime, images = self.open_runtime(4)
+    pair = self.pair_from(self.client.get("/").text)
+    assert pair is not None
+    outsider = next(str(image) for image in images if str(image) not in pair)
+    response = self.client.post("/exclusions", data={"image": outsider})
+
+    self.assertEqual(response.status_code, 409)
+    self.assertEqual(self.excluded_images_of(app.state.runtime), [])
+
+  def test_undo_reverts_the_latest_exclusion_before_an_earlier_comparison(self) -> None:
+    runtime, _images = self.open_runtime(4)
+    first = self.pair_from(self.client.get("/").text)
+    assert first is not None
+    self.client.post("/comparisons", data={"image_a": first[0], "image_b": first[1], "result": "A>B"})
+    second = self.pair_from(self.client.get("/").text)
+    assert second is not None
+    self.client.post("/exclusions", data={"image": second[0]})
+
+    undo_exclusion = self.client.post("/comparisons/undo")
+    restored = self.pair_from(self.client.get("/").text)
+
+    self.assertEqual(undo_exclusion.status_code, 303)
+    self.assertEqual(restored, second)
+    self.assertEqual(read_rows(runtime), [{"image_a": first[0], "image_b": first[1], "result": "A>B"}])
+    self.assertEqual(self.excluded_images_of(runtime), [])
+
+    undo_comparison = self.client.post("/comparisons/undo")
+    restored_again = self.pair_from(self.client.get("/").text)
+
+    self.assertEqual(undo_comparison.status_code, 303)
+    self.assertEqual(restored_again, first)
+    self.assertEqual(read_rows(runtime), [])
+
+  def test_undo_restores_an_exclusion_when_nothing_has_been_compared(self) -> None:
+    runtime, _images = self.open_runtime(4)
+    first_page = self.client.get("/")
+    first = self.pair_from(first_page.text)
+    assert first is not None
+    self.assertIn('id="undo-button" type="submit" disabled', first_page.text)
+    self.client.post("/exclusions", data={"image": first[0]})
+    excluded_page = self.client.get("/")
+
+    self.assertIn('id="undo-button" type="submit"', excluded_page.text)
+    self.assertNotIn('id="undo-button" type="submit" disabled', excluded_page.text)
+
+    undo = self.client.post("/comparisons/undo")
+    restored = self.pair_from(self.client.get("/").text)
+
+    self.assertEqual(undo.status_code, 303)
+    self.assertEqual(restored, first)
+    self.assertEqual(read_rows(runtime), [])
+    self.assertEqual(self.excluded_images_of(runtime), [])
+
+  def test_legacy_comparisons_csv_becomes_history(self) -> None:
+    directory = TemporaryDirectory()
+    self.addCleanup(directory.cleanup)
+    root = Path(directory.name)
+    images = self.write_images(root / "images", 4)
+    output = root / "output"
+    output.mkdir()
+    with (output / "comparisons.csv").open("w", encoding="utf-8", newline="") as csv_file:
+      writer = csv.DictWriter(csv_file, fieldnames=("image_a", "image_b", "result"))
+      writer.writeheader()
+      writer.writerow({"image_a": str(images[0]), "image_b": str(images[1]), "result": "A>B"})
+      writer.writerow({"image_a": str(images[2]), "image_b": str(images[3]), "result": "A<B"})
+    runtime = build_runtime(image_folder=root / "images", output_folder=output)
+    initialize_output(runtime)
+    self.use_runtime(runtime)
+    self.login()
+
+    with (output / "history.csv").open(newline="", encoding="utf-8") as csv_file:
+      self.assertEqual(list(csv.DictReader(csv_file)), [
+        {"action": "comparison", "image_a": str(images[0]), "image_b": str(images[1]), "result": "A>B"},
+        {"action": "comparison", "image_a": str(images[2]), "image_b": str(images[3]), "result": "A<B"},
+      ])
+    self.assertEqual(self.excluded_images_of(runtime), [])
+
+    undo = self.client.post("/comparisons/undo")
+    restored = self.pair_from(self.client.get("/").text)
+
+    self.assertEqual(undo.status_code, 303)
+    self.assertEqual(restored, (str(images[2]), str(images[3])))
+    self.assertEqual(read_rows(runtime), [{"image_a": str(images[0]), "image_b": str(images[1]), "result": "A>B"}])
 
 
 if __name__ == "__main__":
