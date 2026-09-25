@@ -4,7 +4,9 @@ import importlib.util
 import io
 import re
 import sys
+import time
 import unittest
+from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -341,6 +343,87 @@ class ComparisonTests(unittest.TestCase):
     self.assertEqual(restored, (str(images[2]), str(images[3])))
     self.assertEqual(read_rows(runtime), [{"image_a": str(images[0]), "image_b": str(images[1]), "result": "A>B"}])
 
+  def test_discover_dated_images_checks_only_selected_directory(self) -> None:
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      chosen = root / "2026-09" / "2026-09-25"
+      chosen.mkdir(parents=True)
+      current = chosen / "2026-09-25-7.png"
+      current.touch()
+      previous = root / "2026-09" / "2026-09-24"
+      previous.mkdir()
+      (previous / "2026-09-24-9.png").touch()
+      (chosen / "other.txt").touch()
+      with patch.object(Path, "rglob", side_effect=AssertionError("no recursive scan")):
+        found = versus_mobile.discover_dated_images(root, date(2026, 9, 25))
+      self.assertEqual(found, {str(current.resolve())})
+
+  def test_refresh_runtime_includes_each_date_since_last_success(self) -> None:
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      images = root / "images"
+      images.mkdir()
+      original = images / "old.png"
+      original.touch()
+      runtime = build_runtime(image_folder=images, output_folder=root / "output")
+      new_paths = []
+      for day in ("2026-09-24", "2026-09-25", "2026-09-26"):
+        folder = images / day[:7] / day
+        folder.mkdir(parents=True)
+        image = folder / f"{day}-1.png"
+        image.touch()
+        new_paths.append(str(image.resolve()))
+      with patch.object(Path, "rglob", side_effect=AssertionError("no repeat full crawl")):
+        refreshed = versus_mobile.refresh_runtime(runtime, date(2026, 9, 24), date(2026, 9, 26))
+      self.assertEqual(refreshed.source_images, frozenset({str(original.resolve()), *new_paths}))
+      self.assertEqual(runtime.source_images, frozenset({str(original.resolve())}))
+      self.assertIsNot(refreshed, runtime)
+
+  def test_refresh_swaps_runtime_and_preserves_current_pair(self) -> None:
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      images = self.write_images(root / "images", 2)
+      runtime = build_runtime(image_folder=root / "images", output_folder=root / "output")
+      initialize_output(runtime)
+      self.use_runtime(runtime)
+      self.login()
+      before = self.pair_from(self.client.get("/").text)
+      day = date(2026, 9, 25)
+      folder = runtime.image_folder / "2026-09" / "2026-09-25"
+      folder.mkdir(parents=True)
+      new_images = [folder / f"2026-09-25-{seed}.png" for seed in (1, 2)]
+      for image in new_images:
+        image.touch()
+      app.state.runtime = versus_mobile.refresh_runtime(runtime, day, day)
+      after = self.pair_from(self.client.get("/").text)
+      self.assertEqual(before, after)
+      self.assertTrue({str(path.resolve()) for path in new_images} <= app.state.runtime.source_images)
+
+  def test_lifespan_refreshes_new_images_without_manual_trigger(self) -> None:
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      images = root / "images"
+      images.mkdir()
+      runtime = build_runtime(image_folder=images, output_folder=root / "output")
+      initialize_output(runtime)
+      previous_runtime = app.state.runtime
+      previous_date = app.state.refresh_date
+      self.addCleanup(setattr, app.state, "runtime", previous_runtime)
+      self.addCleanup(setattr, app.state, "refresh_date", previous_date)
+      app.state.runtime = runtime
+      app.state.refresh_date = date(2026, 9, 25)
+      with patch.object(versus_mobile, "IMAGE_REFRESH_INTERVAL_SECONDS", 0.01), \
+           patch.object(versus_mobile, "hk_today", return_value=date(2026, 9, 25)):
+        with TestClient(app):
+          folder = images / "2026-09" / "2026-09-25"
+          folder.mkdir(parents=True)
+          image = folder / "2026-09-25-1.png"
+          image.touch()
+          deadline = time.monotonic() + 2
+          while str(image.resolve()) not in app.state.runtime.source_images and time.monotonic() < deadline:
+            time.sleep(0.01)
+          self.assertIn(str(image.resolve()), app.state.runtime.source_images)
+          self.assertIn(str(image.resolve()), versus_mobile.unused_images(app.state.runtime, []))
 
 if __name__ == "__main__":
   unittest.main()

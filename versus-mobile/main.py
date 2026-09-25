@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import csv
+import logging
 import random
 import sys
 import tempfile
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from secrets import compare_digest
+from zoneinfo import ZoneInfo
 
 import uvicorn
 from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Request
@@ -30,9 +35,46 @@ HISTORY_ACTIONS = ("comparison", "exclude")
 EXCLUDE_SIDES = ("A", "B")
 EXCLUDED_FIELDNAMES = ("image",)
 
+IMAGE_REFRESH_INTERVAL_SECONDS = 60
+logger = logging.getLogger(__name__)
+
+
+def hk_today() -> date:
+  return datetime.now(ZoneInfo("Asia/Hong_Kong")).date()
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+  async def refresh_loop() -> None:
+    while True:
+      await asyncio.sleep(IMAGE_REFRESH_INTERVAL_SECONDS)
+      try:
+        runtime = application.state.runtime
+        last_date = application.state.refresh_date
+        today = hk_today()
+        refreshed = await asyncio.to_thread(refresh_runtime, runtime, last_date, today)
+        application.state.runtime = refreshed
+        if today >= last_date:
+          application.state.refresh_date = today
+      except Exception:
+        logger.exception("Image refresh failed; will retry at the next tick")
+
+  task = None
+  if application.state.refresh_date is not None:
+    task = asyncio.create_task(refresh_loop())
+  try:
+    yield
+  finally:
+    if task is not None:
+      task.cancel()
+      with suppress(asyncio.CancelledError):
+        await task
+
+
 config = load_config()
-app = FastAPI(title="Image Comparison")
+app = FastAPI(title="Image Comparison", lifespan=lifespan)
 app.state.runtime = None
+app.state.refresh_date = None
 app.add_middleware(SessionMiddleware, secret_key=config["session_secret"], https_only=False)
 templates = Jinja2Templates(directory=Path(__file__).with_name("templates"))
 
@@ -99,12 +141,37 @@ def discover_images(image_folder: Path) -> list[Path]:
   })
 
 
+def discover_dated_images(image_folder: Path, day: date) -> set[str]:
+  folder = image_folder / day.strftime("%Y-%m") / day.isoformat()
+  if not folder.is_dir():
+    return set()
+  return {
+    str(path.resolve())
+    for path in folder.iterdir()
+    if path.is_file() and path.suffix.lower() == ".png"
+  }
+
+
 def build_runtime(*, image_folder: Path, output_folder: Path) -> RuntimeConfig:
   return RuntimeConfig(
     image_folder=image_folder,
     output_folder=output_folder,
     source_images=frozenset(str(image) for image in discover_images(image_folder)),
   )
+
+
+def refresh_runtime(runtime: RuntimeConfig, last_scan_date: date, today: date) -> RuntimeConfig:
+  # A backward clock leaves the cursor ahead of today; no new images are found until it catches up.
+  if today < last_scan_date:
+    return runtime
+  images = set(runtime.source_images)
+  day = last_scan_date
+  while day <= today:
+    images.update(discover_dated_images(runtime.image_folder, day))
+    day += timedelta(days=1)
+  if images == runtime.source_images:
+    return runtime
+  return RuntimeConfig(runtime.image_folder, runtime.output_folder, frozenset(images))
 
 
 def result_path(runtime: RuntimeConfig) -> Path:
@@ -434,6 +501,7 @@ def serve(port: int) -> None:
 def main(arguments: list[str] | None = None) -> None:
   startup_arguments = parse_startup_arguments(arguments)
   try:
+    startup_date = hk_today()
     runtime = build_runtime(
       image_folder=startup_arguments.image_folder,
       output_folder=startup_arguments.output_folder,
@@ -442,6 +510,7 @@ def main(arguments: list[str] | None = None) -> None:
   except ValueError as error:
     raise SystemExit(f"Configuration error: {error}") from error
   app.state.runtime = runtime
+  app.state.refresh_date = startup_date
   serve(startup_arguments.port)
 
 
