@@ -60,10 +60,26 @@ def resolve_existing_directory(value: str, argument: str) -> Path:
   return path
 
 
+def parse_port(value: str) -> int:
+  try:
+    port = int(value)
+  except ValueError as error:
+    raise argparse.ArgumentTypeError("--port must be an integer from 1 to 65535") from error
+  if not 1 <= port <= 65535:
+    raise argparse.ArgumentTypeError("--port must be an integer from 1 to 65535")
+  return port
+
+
 def parse_startup_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
   parser = argparse.ArgumentParser()
   parser.add_argument("--image-folder", required=True, help="Folder of images to compare.")
   parser.add_argument("--output-folder", required=True, help="Directory for comparison results.")
+  parser.add_argument(
+    "--port",
+    type=parse_port,
+    default=8000,
+    help="TCP port to listen on (default: 8000).",
+  )
   options = parser.parse_args(arguments)
   try:
     options.image_folder = resolve_existing_directory(options.image_folder, "--image-folder")
@@ -411,8 +427,12 @@ def undo_comparison(request: Request) -> RedirectResponse:
 app.include_router(protected_pages)
 
 
-if __name__ == "__main__":
-  startup_arguments = parse_startup_arguments()
+def serve(port: int) -> None:
+  uvicorn.run(app, host="0.0.0.0", port=port)
+
+
+def main(arguments: list[str] | None = None) -> None:
+  startup_arguments = parse_startup_arguments(arguments)
   try:
     runtime = build_runtime(
       image_folder=startup_arguments.image_folder,
@@ -422,4 +442,8 @@ if __name__ == "__main__":
   except ValueError as error:
     raise SystemExit(f"Configuration error: {error}") from error
   app.state.runtime = runtime
-  uvicorn.run(app, host="0.0.0.0", port=8000)
+  serve(startup_arguments.port)
+
+
+if __name__ == "__main__":
+  main()

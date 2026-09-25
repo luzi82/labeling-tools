@@ -1,10 +1,13 @@
+import contextlib
 import csv
 import importlib.util
+import io
 import re
 import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -141,6 +144,57 @@ class ComparisonTests(unittest.TestCase):
       self.assertEqual(arguments.image_folder, images.resolve())
       self.assertEqual(arguments.output_folder, output.resolve())
       self.assertTrue(output.is_dir())
+
+  def test_port_defaults_to_8000(self) -> None:
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      images = root / "images"
+      images.mkdir()
+      arguments = parse_startup_arguments([
+        "--image-folder", str(images),
+        "--output-folder", str(root / "output"),
+      ])
+      self.assertEqual(arguments.port, 8000)
+
+  def test_port_argument_is_accepted(self) -> None:
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      images = root / "images"
+      images.mkdir()
+      arguments = parse_startup_arguments([
+        "--image-folder", str(images),
+        "--output-folder", str(root / "output"),
+        "--port", "9001",
+      ])
+      self.assertEqual(arguments.port, 9001)
+
+  def test_port_rejects_values_outside_1_to_65535(self) -> None:
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      images = root / "images"
+      images.mkdir()
+      base = ["--image-folder", str(images), "--output-folder", str(root / "output"), "--port"]
+      for bad in ("0", "-1", "65536", "abc"):
+        with self.subTest(port=bad):
+          with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+              parse_startup_arguments([*base, bad])
+          self.assertEqual(raised.exception.code, 2)
+
+  def test_main_passes_port_to_uvicorn(self) -> None:
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      images = root / "images"
+      images.mkdir()
+      previous = app.state.runtime
+      self.addCleanup(setattr, app.state, "runtime", previous)
+      with patch.object(versus_mobile.uvicorn, "run") as run:
+        versus_mobile.main([
+          "--image-folder", str(images),
+          "--output-folder", str(root / "output"),
+          "--port", "9001",
+        ])
+      run.assert_called_once_with(app, host="0.0.0.0", port=9001)
 
   def test_image_is_served_only_from_the_source_folder(self) -> None:
     _runtime, images = self.open_runtime(2)
