@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Compare | Versus</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: #f7faf8;
+      color: #17261d;
+      display: flex;
+      flex-direction: column;
+      font-family: Georgia, serif;
+      height: 100dvh;
+      overflow: hidden;
+      position: relative;
+    }
+    .undo {
+      position: absolute;
+      right: .5rem;
+      top: max(.4rem, env(safe-area-inset-top));
+      z-index: 1;
+    }
+    .undo button {
+      background: #fffdf8;
+      border: 1px solid #1e6245;
+      border-radius: 4px;
+      color: #1e6245;
+      font: inherit;
+      min-height: 2.5rem;
+      padding: .25rem .9rem;
+      touch-action: manipulation;
+    }
+    .undo button:disabled { opacity: .4; }
+    .pair {
+      display: flex;
+      flex: 1 1 auto;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .slot {
+      appearance: none;
+      background: transparent;
+      border: 0;
+      cursor: pointer;
+      display: flex;
+      flex: 1 1 0;
+      margin: 0;
+      min-height: 0;
+      overflow: hidden;
+      padding: 0;
+      touch-action: manipulation;
+      width: 100%;
+    }
+    .slot img {
+      height: 100%;
+      object-fit: contain;
+      pointer-events: none;
+      user-select: none;
+      width: 100%;
+    }
+    .tie {
+      background: #1e6245;
+      border: 0;
+      color: white;
+      flex: 0 0 auto;
+      font: inherit;
+      font-size: 1.5rem;
+      min-height: 3rem;
+      touch-action: manipulation;
+      width: 100%;
+    }
+    .done {
+      align-items: center;
+      display: flex;
+      flex: 1;
+      justify-content: center;
+      margin: 0;
+    }
+  </style>
+</head>
+<body {% if image_a %}data-state="compare" data-image-a="{{ image_a }}" data-image-b="{{ image_b }}"{% else %}data-state="done"{% endif %}>
+  {% if image_a or can_undo %}
+  <form action="/comparisons/undo" class="undo" method="post">
+    <button id="undo-button" type="submit" {% if not can_undo %}disabled{% endif %}>Undo</button>
+  </form>
+  {% endif %}
+  {% if image_a %}
+  <form action="/comparisons" class="pair" method="post">
+    <input name="image_a" type="hidden" value="{{ image_a }}">
+    <input name="image_b" type="hidden" value="{{ image_b }}">
+    <button class="slot" name="result" type="submit" value="A&gt;B">
+      <img alt="" src="/image?image_path={{ image_a | urlencode }}">
+    </button>
+    <button class="tie" name="result" type="submit" value="A≈B">≈</button>
+    <button class="slot" name="result" type="submit" value="A&lt;B">
+      <img alt="" src="/image?image_path={{ image_b | urlencode }}">
+    </button>
+  </form>
+  {% else %}
+  <p class="done">No pairs left.</p>
+  {% endif %}
+</body>
+</html>

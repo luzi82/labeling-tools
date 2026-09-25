@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Sign in | Versus</title>
+  <style>
+    body { align-items: center; background: #f1f5f2; color: #17261d; display: flex; font-family: Georgia, serif; justify-content: center; margin: 0; min-height: 100vh; min-height: 100dvh; }
+    main { background: #fffdf8; border: 1px solid #cbd7cc; border-radius: 8px; box-shadow: 0 12px 30px #17261d1c; box-sizing: border-box; padding: 2.5rem; width: min(100% - 2rem, 25rem); }
+    h1 { font-size: 2rem; margin: 0 0 .5rem; }
+    p { color: #506056; line-height: 1.5; }
+    label { display: block; font-weight: bold; margin: 1.5rem 0 .5rem; }
+    input, button { box-sizing: border-box; font: inherit; width: 100%; }
+    input { border: 1px solid #879b89; border-radius: 4px; padding: .7rem; }
+    button { background: #1e6245; border: 0; border-radius: 4px; color: white; cursor: pointer; margin-top: 1rem; min-height: 3rem; padding: .75rem; touch-action: manipulation; }
+    .error { color: #a12e20; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Versus</h1>
+    <p>Enter the workspace password to continue.</p>
+    {% if error %}<p class="error">Incorrect password.</p>{% endif %}
+    <form action="/login" method="post">
+      <label for="password">Password</label>
+      <input autofocus id="password" name="password" required type="password">
+      <button type="submit">Sign in</button>
+    </form>
+  </main>
+</body>
+</html>
