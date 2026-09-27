@@ -425,5 +425,36 @@ class ComparisonTests(unittest.TestCase):
           self.assertIn(str(image.resolve()), app.state.runtime.source_images)
           self.assertIn(str(image.resolve()), versus_mobile.unused_images(app.state.runtime, []))
 
+  def test_recency_weights_halve_every_128_ranks(self) -> None:
+    images = [f"{index:04d}" for index in range(257)]
+    weights = versus_mobile.recency_weights(images)
+    self.assertEqual(weights[-1], 1)
+    self.assertEqual(weights[-1 - 128], 0.5)
+    self.assertEqual(weights[-1 - 256], 0.25)
+
+  def test_recency_weights_rerank_after_removals(self) -> None:
+    oldest_first = ["E", "D", "C", "B", "A"]
+    original = versus_mobile.recency_weights(oldest_first)
+    reranked = versus_mobile.recency_weights(["E", "C", "A"])
+    self.assertEqual(reranked, [original[2], original[3], original[4]])
+
+  def test_weighted_sample_passes_rank_weights_and_drops_the_pick(self) -> None:
+    oldest_first = ["E", "D", "C", "B", "A"]
+    calls: list[tuple[list[str], list[float]]] = []
+
+    def choices(population, weights, k):
+      calls.append((list(population), list(weights)))
+      return [population[-1]]
+
+    with patch.object(versus_mobile.random, "choices", side_effect=choices):
+      chosen = versus_mobile.weighted_sample(oldest_first, 2)
+
+    self.assertEqual(chosen, ["A", "B"])
+    self.assertEqual(calls[0][0], oldest_first)
+    self.assertEqual(calls[0][1], versus_mobile.recency_weights(oldest_first))
+    self.assertEqual(calls[1][0], ["E", "D", "C", "B"])
+    self.assertEqual(calls[1][1], versus_mobile.recency_weights(["E", "D", "C", "B"]))
+    self.assertNotIn("A", calls[1][0])
+
 if __name__ == "__main__":
   unittest.main()

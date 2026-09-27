@@ -36,6 +36,7 @@ EXCLUDE_SIDES = ("A", "B")
 EXCLUDED_FIELDNAMES = ("image",)
 
 IMAGE_REFRESH_INTERVAL_SECONDS = 60
+HALF_LIFE_IMAGES = 128
 logger = logging.getLogger(__name__)
 
 
@@ -344,6 +345,21 @@ def unused_images(runtime: RuntimeConfig, history: list[dict[str, str]]) -> set[
   return set(runtime.source_images - consumed)
 
 
+def recency_weights(oldest_first: list[str]) -> list[float]:
+  newest = len(oldest_first) - 1
+  return [0.5 ** ((newest - index) / HALF_LIFE_IMAGES) for index in range(len(oldest_first))]
+
+
+def weighted_sample(oldest_first: list[str], count: int) -> list[str]:
+  pool = oldest_first[:]
+  chosen: list[str] = []
+  for _ in range(count):
+    pick = random.choices(pool, weights=recency_weights(pool), k=1)[0]
+    chosen.append(pick)
+    pool.remove(pick)
+  return chosen
+
+
 def stored_pair(request: Request, unused: set[str]) -> tuple[str, str] | None:
   pair = request.session.get("pair")
   if (
@@ -366,7 +382,7 @@ def current_pair(request: Request, runtime: RuntimeConfig) -> tuple[str, str] | 
     return pair
   if len(unused) < 2:
     return None
-  chosen = random.sample(sorted(unused), 2)
+  chosen = weighted_sample(sorted(unused), 2)
   request.session["pair"] = chosen
   return chosen[0], chosen[1]
 
@@ -477,7 +493,7 @@ def create_exclusion(request: Request, image: str = Form()) -> RedirectResponse:
   if not remaining:
     request.session.pop("pair", None)
   else:
-    replacement = random.choice(remaining)
+    replacement = weighted_sample(remaining, 1)[0]
     request.session["pair"] = [replacement, kept] if side == "A" else [kept, replacement]
   return RedirectResponse(url="/", status_code=303)
 
