@@ -123,6 +123,11 @@ def parse_startup_arguments(arguments: list[str] | None = None) -> argparse.Name
     default=8000,
     help="TCP port to listen on (default: 8000).",
   )
+  parser.add_argument(
+    "--host",
+    default="0.0.0.0",
+    help="Address to bind (default: 0.0.0.0).",
+  )
   options = parser.parse_args(arguments)
   try:
     options.image_folder = resolve_existing_directory(options.image_folder, "--image-folder")
@@ -513,8 +518,8 @@ def undo_comparison(request: Request) -> RedirectResponse:
 app.include_router(protected_pages)
 
 
-def serve(port: int) -> None:
-  uvicorn.run(app, host="0.0.0.0", port=port)
+def serve(host: str, port: int) -> None:
+  uvicorn.run(app, host=host, port=port)
 
 
 def main(arguments: list[str] | None = None) -> None:
@@ -530,7 +535,7 @@ def main(arguments: list[str] | None = None) -> None:
     raise SystemExit(f"Configuration error: {error}") from error
   app.state.runtime = runtime
   app.state.refresh_date = startup_date
-  serve(startup_arguments.port)
+  serve(startup_arguments.host, startup_arguments.port)
 
 
 if __name__ == "__main__":
