@@ -433,6 +433,7 @@ def logout(request: Request) -> RedirectResponse:
 @protected_pages.get("/", response_class=HTMLResponse)
 def home(request: Request) -> HTMLResponse:
   runtime = runtime_for(request)
+  history = read_history(runtime)
   image_a, image_b = current_pair(request, runtime) or (None, None)
   return templates.TemplateResponse(
     request=request,
@@ -440,7 +441,9 @@ def home(request: Request) -> HTMLResponse:
     context={
       "image_a": image_a,
       "image_b": image_b,
-      "can_undo": bool(read_history(runtime)),
+      "can_undo": bool(history),
+      "completed_pairs": len(comparison_rows(history)),
+      "unused_count": len(unused_images(runtime, history)),
     },
   )
 

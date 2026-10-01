@@ -17,6 +17,18 @@
       overflow: hidden;
       position: relative;
     }
+    .counts {
+      font-size: .8rem;
+      left: 50%;
+      line-height: 2.5rem;
+      margin: 0;
+      pointer-events: none;
+      position: absolute;
+      top: max(.4rem, env(safe-area-inset-top));
+      transform: translateX(-50%);
+      white-space: nowrap;
+      z-index: 1;
+    }
     .undo {
       position: absolute;
       right: .5rem;
@@ -91,6 +103,7 @@
   </style>
 </head>
 <body {% if image_a %}data-state="compare" data-image-a="{{ image_a }}" data-image-b="{{ image_b }}"{% else %}data-state="done"{% endif %}>
+  <p class="counts">已完成 {{ completed_pairs }}　未處理 {{ unused_count }}</p>
   {% if image_a or can_undo %}
   <form action="/comparisons/undo" class="undo" method="post">
     <button id="undo-button" type="submit" {% if not can_undo %}disabled{% endif %}>Undo</button>

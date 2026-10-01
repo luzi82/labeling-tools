@@ -136,6 +136,28 @@ class ComparisonTests(unittest.TestCase):
     self.assertEqual(self.pair_from(first.text), self.pair_from(second.text))
     self.assertIn('id="undo-button" type="submit" disabled', first.text)
 
+  def test_progress_counts_track_comparisons_exclusions_and_undo(self) -> None:
+    self.open_runtime(4)
+    start = self.client.get("/")
+    self.assertIn("已完成 0　未處理 4", start.text)
+
+    first = self.pair_from(start.text)
+    assert first is not None
+    self.client.post("/comparisons", data={"image_a": first[0], "image_b": first[1], "result": "A>B"})
+    after_comparison = self.client.get("/")
+    self.assertIn("已完成 1　未處理 2", after_comparison.text)
+
+    second = self.pair_from(after_comparison.text)
+    assert second is not None
+    self.client.post("/exclusions", data={"image": second[0]})
+    after_exclude = self.client.get("/")
+    self.assertIn('data-state="done"', after_exclude.text)
+    self.assertIn("已完成 1　未處理 1", after_exclude.text)
+
+    self.client.post("/comparisons/undo")
+    after_undo = self.client.get("/")
+    self.assertIn("已完成 1　未處理 2", after_undo.text)
+
   def test_startup_arguments_create_output_folder(self) -> None:
     with TemporaryDirectory() as directory:
       root = Path(directory)
