@@ -220,6 +220,21 @@ class ComparisonTests(unittest.TestCase):
         ])
       run.assert_called_once_with(app, host="0.0.0.0", port=9001)
 
+  def test_main_passes_host_to_uvicorn(self) -> None:
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      images = root / "images"
+      images.mkdir()
+      previous = app.state.runtime
+      self.addCleanup(setattr, app.state, "runtime", previous)
+      with patch.object(versus_mobile.uvicorn, "run") as run:
+        versus_mobile.main([
+          "--image-folder", str(images),
+          "--output-folder", str(root / "output"),
+          "--host", "127.0.0.1",
+        ])
+      run.assert_called_once_with(app, host="127.0.0.1", port=8000)
+
   def test_image_is_served_only_from_the_source_folder(self) -> None:
     _runtime, images = self.open_runtime(2)
     available = self.client.get("/image", params={"image_path": str(images[0])})
