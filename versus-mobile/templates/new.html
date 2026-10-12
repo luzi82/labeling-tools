@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>建立 | Versus</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { background: #f7faf8; color: #17261d; font-family: Georgia, serif; margin: 0; }
+    main { margin: 0 auto; max-width: 40rem; padding: 1rem; }
+    h1 { font-size: 2rem; margin: 0 0 1rem; }
+    label { display: block; font-weight: bold; margin: 1rem 0 .4rem; }
+    .choice { font-weight: normal; margin: .35rem 0; }
+    input[type="text"] { border: 1px solid #879b89; border-radius: 4px; font: inherit; padding: .7rem; width: 100%; }
+    button { background: #1e6245; border: 0; border-radius: 4px; color: white; font: inherit; margin-top: 1rem; min-height: 3rem; padding: .75rem; touch-action: manipulation; width: 100%; }
+    .error { color: #a12e20; font-weight: bold; }
+    .back { color: #1e6245; display: inline-block; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>建立</h1>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <form action="/new" method="post">
+      <label for="name">名稱</label>
+      <input id="name" name="name" required type="text">
+      <label>Dataset</label>
+      {% for dataset in datasets %}
+      <label class="choice"><input name="datasets" type="checkbox" value="{{ dataset }}"> {{ dataset }}</label>
+      {% endfor %}
+      <button type="submit">建立</button>
+    </form>
+    <a class="back" href="/">列表</a>
+  </main>
+</body>
+</html>

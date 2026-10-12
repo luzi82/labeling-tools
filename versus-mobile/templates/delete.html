@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>刪除 | Versus</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { background: #f7faf8; color: #17261d; font-family: Georgia, serif; margin: 0; }
+    main { margin: 0 auto; max-width: 40rem; padding: 1rem; }
+    h1 { font-size: 2rem; margin: 0 0 1rem; }
+    p { line-height: 1.5; }
+    button, a { border-radius: 4px; display: inline-block; font: inherit; min-height: 3rem; padding: .75rem 1.2rem; text-align: center; text-decoration: none; touch-action: manipulation; }
+    button { background: #a12e20; border: 0; color: white; }
+    a { border: 1px solid #1e6245; color: #1e6245; margin-left: .5rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>刪除 {{ name }}</h1>
+    <p>這個 versus 的比較紀錄會一併刪除。</p>
+    <form action="/versus/{{ name | urlquote }}/delete" method="post">
+      <button type="submit">刪除</button>
+      <a href="/">取消</a>
+    </form>
+  </main>
+</body>
+</html>

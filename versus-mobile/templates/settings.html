@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>設定 | Versus</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { background: #f7faf8; color: #17261d; font-family: Georgia, serif; margin: 0; }
+    main { margin: 0 auto; max-width: 40rem; padding: 1rem; }
+    h1 { font-size: 2rem; margin: 0 0 1rem; }
+    a { color: #1e6245; }
+    label { display: block; font-weight: normal; margin: .5rem 0; }
+    button { background: #1e6245; border: 0; border-radius: 4px; color: white; font: inherit; margin-top: 1rem; min-height: 3rem; padding: .75rem 1.5rem; touch-action: manipulation; width: 100%; }
+    .error { color: #a12e20; font-weight: bold; }
+    .back { display: inline-block; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>{{ name }}</h1>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <form action="/versus/{{ name | urlquote }}/settings" method="post">
+      {% for dataset in datasets %}
+      <label><input name="datasets" type="checkbox" value="{{ dataset }}" {% if dataset in selected %}checked{% endif %}> {{ dataset }}</label>
+      {% endfor %}
+      <button type="submit">儲存</button>
+    </form>
+    <a class="back" href="/">列表</a>
+  </main>
+</body>
+</html>

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Versus</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { background: #f7faf8; color: #17261d; font-family: Georgia, serif; margin: 0; }
+    header, main { margin: 0 auto; max-width: 40rem; padding: 1rem; }
+    header { align-items: center; display: flex; justify-content: space-between; padding-bottom: 0; }
+    h1 { font-size: 2rem; margin: 0; }
+    button, .action {
+      background: #fffdf8;
+      border: 1px solid #1e6245;
+      border-radius: 4px;
+      color: #1e6245;
+      display: inline-block;
+      font: inherit;
+      min-height: 2.5rem;
+      padding: .4rem .9rem;
+      text-decoration: none;
+      touch-action: manipulation;
+    }
+    a.primary { background: #1e6245; border: 0; color: white; }
+    header button { min-height: 2.5rem; }
+    ul { list-style: none; margin: 0; padding: 0; }
+    li { background: #fffdf8; border: 1px solid #cbd7cc; border-radius: 8px; margin: 0 0 .75rem; padding: 1rem; }
+    .versus-name { color: #1e6245; font-size: 1.4rem; font-weight: bold; }
+    .datasets { color: #506056; margin: .35rem 0 .75rem; }
+    .row { display: flex; gap: .5rem; }
+    .danger { border-color: #a12e20; color: #a12e20; }
+    .empty { color: #506056; }
+    .create { margin: 0 0 1rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Versus</h1>
+    <form action="/logout" method="post"><button type="submit">Sign out</button></form>
+  </header>
+  <main>
+    <p class="create"><a class="action primary" href="/new">建立</a></p>
+    {% if versus_list %}
+    <ul>
+      {% for versus in versus_list %}
+      <li>
+        <a class="versus-name" href="/versus/{{ versus.name | urlquote }}">{{ versus.name }}</a>
+        <p class="datasets">{{ versus.datasets | join("、") if versus.datasets else "未選 dataset" }}</p>
+        <div class="row">
+          <a class="action" href="/versus/{{ versus.name | urlquote }}/settings">設定</a>
+          <a class="action danger" href="/versus/{{ versus.name | urlquote }}/delete">刪除</a>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="empty">沒有 versus。</p>
+    {% endif %}
+  </main>
+</body>
+</html>
