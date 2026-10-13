@@ -534,14 +534,10 @@ def undo_last_action(store: VersusStore) -> dict[str, str] | None:
   return last
 
 
-def versus_entries(workdir: Path) -> list[tuple[str, tuple[str, ...]]]:
+def versus_entries(workdir: Path) -> list[str]:
   if not workdir.is_dir():
     return []
-  entries: list[tuple[str, tuple[str, ...]]] = []
-  for child in sorted((path for path in workdir.iterdir() if path.is_dir()), key=lambda path: path.name):
-    if is_versus_name(child.name):
-      entries.append((child.name, read_dataset_names(child)))
-  return entries
+  return sorted(child.name for child in workdir.iterdir() if child.is_dir() and is_versus_name(child.name))
 
 
 def selected_dataset_names(catalog: Catalog, requested: list[str]) -> tuple[str, ...] | None:
@@ -556,12 +552,21 @@ def versus_path(name: str, suffix: str = "") -> str:
 
 
 def list_context(request: Request) -> dict[str, object]:
-  return {
-    "versus_list": [
-      {"name": name, "datasets": datasets}
-      for name, datasets in versus_entries(workdir_for(request))
-    ],
-  }
+  catalog = catalog_for(request)
+  workdir = workdir_for(request)
+  versus_list: list[dict[str, object]] = []
+  for name in versus_entries(workdir):
+    folder = versus_directory(workdir, name)
+    store = make_store(catalog, name, folder)
+    if not history_path(folder).exists():
+      initialize_output(store)
+    history = read_history(store)
+    versus_list.append({
+      "name": name,
+      "completed_pairs": len(comparison_rows(history)),
+      "unused_count": len(unused_images(store, history)),
+    })
+  return {"versus_list": versus_list}
 
 
 protected_pages = APIRouter(dependencies=[Depends(require_authentication)])
@@ -590,7 +595,6 @@ def logout(request: Request) -> RedirectResponse:
 
 @protected_pages.get("/", response_class=HTMLResponse)
 def home(request: Request) -> HTMLResponse:
-  catalog_for(request)
   return templates.TemplateResponse(
     request=request,
     name="index.html",

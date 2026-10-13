@@ -527,10 +527,26 @@ class ComparisonTests(unittest.TestCase):
     self.assertIn('href="/new"', listing.text)
     self.assertNotIn('action="/new"', listing.text)
     self.assertNotIn('name="name"', listing.text)
-    self.assertIn("alpha", listing.text)
+    self.assertIn("已完成 0　未處理 2", listing.text)
+    self.assertNotIn("alpha", listing.text)
     compare = self.client.get("/versus/main")
     self.assertIn('data-state="compare"', compare.text)
     self.assertIn('class="back" href="/"', compare.text)
+
+  def test_list_counts_match_the_comparison_page(self) -> None:
+    self.open_workspace({"alpha": 4, "beta": 2}, select=["alpha"])
+    start = self.client.get("/versus/main")
+    pair = self.pair_from(start.text)
+    assert pair is not None
+    self.client.post("/versus/main/comparisons", data={"image_a": pair[0], "image_b": pair[1], "result": "A>B"})
+    self.client.post("/versus/main/settings", data={"datasets": ["alpha", "beta"]})
+    compare = self.client.get("/versus/main")
+    listing = self.client.get("/")
+
+    self.assertIn("已完成 1　未處理 4", compare.text)
+    self.assertIn("已完成 1　未處理 4", listing.text)
+    self.assertNotIn("alpha", listing.text)
+    self.assertNotIn("beta", listing.text)
 
   def test_create_requires_a_dataset_and_rejects_bad_names(self) -> None:
     self.open_workspace({"alpha": 1}, versus=None)

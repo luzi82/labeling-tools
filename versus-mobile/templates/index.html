@@ -27,7 +27,7 @@
     ul { list-style: none; margin: 0; padding: 0; }
     li { background: #fffdf8; border: 1px solid #cbd7cc; border-radius: 8px; margin: 0 0 .75rem; padding: 1rem; }
     .versus-name { color: #1e6245; font-size: 1.4rem; font-weight: bold; }
-    .datasets { color: #506056; margin: .35rem 0 .75rem; }
+    .counts { color: #506056; margin: .35rem 0 .75rem; }
     .row { display: flex; gap: .5rem; }
     .danger { border-color: #a12e20; color: #a12e20; }
     .empty { color: #506056; }
@@ -46,7 +46,7 @@
       {% for versus in versus_list %}
       <li>
         <a class="versus-name" href="/versus/{{ versus.name | urlquote }}">{{ versus.name }}</a>
-        <p class="datasets">{{ versus.datasets | join("、") if versus.datasets else "未選 dataset" }}</p>
+        <p class="counts">已完成 {{ versus.completed_pairs }}　未處理 {{ versus.unused_count }}</p>
         <div class="row">
           <a class="action" href="/versus/{{ versus.name | urlquote }}/settings">設定</a>
           <a class="action danger" href="/versus/{{ versus.name | urlquote }}/delete">刪除</a>
