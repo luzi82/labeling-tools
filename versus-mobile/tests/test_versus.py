@@ -259,13 +259,21 @@ class ComparisonTests(unittest.TestCase):
 
   def test_image_is_served_only_from_known_datasets(self) -> None:
     store, written, workdir, _catalog = self.open_workspace({"alpha": 2, "beta": 1}, select=["alpha"])
-    available = self.client.get("/image", params={"image_path": str(written["alpha"][0])})
+    source = written["alpha"][0]
+    original = source.read_bytes()
+    available = self.client.get("/image", params={"image_path": str(source)})
     other_dataset = self.client.get("/image", params={"image_path": str(written["beta"][0])})
     outside = workdir.parent / "outside.png"
     Image.new("RGB", (8, 8)).save(outside)
     missing = self.client.get("/image", params={"image_path": str(outside)})
 
     self.assertEqual(available.status_code, 200)
+    self.assertEqual(available.headers["content-type"], "image/jpeg")
+    self.assertEqual(available.headers["cache-control"], "private, max-age=86400")
+    self.assertTrue(available.content.startswith(b"\xff\xd8"))
+    with Image.open(source) as original_image, Image.open(io.BytesIO(available.content)) as jpeg:
+      self.assertEqual(jpeg.size, original_image.size)
+    self.assertEqual(source.read_bytes(), original)
     self.assertEqual(other_dataset.status_code, 200)
     self.assertEqual(missing.status_code, 404)
     with versus_mobile.result_path(store.folder).open(newline="", encoding="utf-8") as csv_file:

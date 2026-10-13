@@ -9,6 +9,7 @@ import shutil
 import sys
 import tempfile
 from collections.abc import Iterable
+from io import BytesIO
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -19,7 +20,8 @@ from zoneinfo import ZoneInfo
 
 import uvicorn
 from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from PIL import Image
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.templating import Jinja2Templates
 
@@ -706,8 +708,18 @@ def compare(request: Request, name: str) -> HTMLResponse:
   )
 
 
+JPEG_QUALITY = 85
+
+
+def jpeg_bytes(image_path: Path) -> bytes:
+  with Image.open(image_path) as image:
+    buffer = BytesIO()
+    image.convert("RGB").save(buffer, format="JPEG", quality=JPEG_QUALITY, optimize=True)
+    return buffer.getvalue()
+
+
 @protected_pages.get("/image")
-def image(request: Request, image_path: str) -> FileResponse:
+def image(request: Request, image_path: str) -> Response:
   catalog = catalog_for(request)
   resolved = Path(image_path).resolve()
   known = union_images(catalog.datasets.values())
@@ -717,7 +729,11 @@ def image(request: Request, image_path: str) -> FileResponse:
     or resolved.suffix.lower() not in IMAGE_EXTENSIONS
   ):
     raise HTTPException(status_code=404, detail="Image is not available")
-  return FileResponse(resolved)
+  return Response(
+    content=jpeg_bytes(resolved),
+    media_type="image/jpeg",
+    headers={"Cache-Control": "private, max-age=86400"},
+  )
 
 
 @protected_pages.post("/versus/{name}/comparisons")
