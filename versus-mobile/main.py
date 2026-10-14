@@ -294,12 +294,19 @@ def write_state(folder: Path, history: list[dict[str, str]]) -> None:
 def normalized_image_pair(
   image_a: str | None,
   image_b: str | None,
+  known_images: frozenset[str],
   row_number: int,
   label: str,
 ) -> tuple[str, str]:
   if not image_a or not image_b or not Path(image_a).is_absolute() or not Path(image_b).is_absolute():
     raise ValueError(f"Invalid {label} row {row_number}")
-  return str(Path(image_a).resolve()), str(Path(image_b).resolve())
+
+  def canonical(image: str) -> str:
+    if image in known_images:
+      return image
+    return str(Path(image).resolve())
+
+  return canonical(image_a), canonical(image_b)
 
 
 def read_legacy_comparisons(folder: Path, known_images: frozenset[str]) -> list[dict[str, str]]:
@@ -312,7 +319,9 @@ def read_legacy_comparisons(folder: Path, known_images: frozenset[str]) -> list[
     seen: set[str] = set()
     for row_number, row in enumerate(reader, start=2):
       result = row.get("result")
-      normalized_a, normalized_b = normalized_image_pair(row.get("image_a"), row.get("image_b"), row_number, "comparison")
+      normalized_a, normalized_b = normalized_image_pair(
+        row.get("image_a"), row.get("image_b"), known_images, row_number, "comparison"
+      )
       if result not in RESULTS:
         raise ValueError(f"Invalid comparison result in row {row_number}")
       if normalized_a == normalized_b or normalized_a not in known_images or normalized_b not in known_images:
@@ -341,7 +350,9 @@ def read_history(store: VersusStore) -> list[dict[str, str]]:
       result = row.get("result")
       if action not in HISTORY_ACTIONS:
         raise ValueError(f"Invalid history row {row_number}")
-      normalized_a, normalized_b = normalized_image_pair(row.get("image_a"), row.get("image_b"), row_number, "history")
+      normalized_a, normalized_b = normalized_image_pair(
+        row.get("image_a"), row.get("image_b"), store.known_images, row_number, "history"
+      )
       if normalized_a == normalized_b or normalized_a not in store.known_images or normalized_b not in store.known_images:
         raise ValueError(f"Invalid image path in history row {row_number}")
       consumed = compared | excluded

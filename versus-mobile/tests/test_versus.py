@@ -415,6 +415,67 @@ class ComparisonTests(unittest.TestCase):
     self.assertEqual(restored, (str(images[2]), str(images[3])))
     self.assertEqual(read_rows(store), [{"image_a": str(images[0]), "image_b": str(images[1]), "result": "A>B"}])
 
+  def test_known_history_paths_skip_resolve(self) -> None:
+    store, written, _workdir, _catalog = self.open_workspace({"alpha": 2})
+    images = written["alpha"]
+    history = [{
+      "action": "comparison",
+      "image_a": str(images[0]),
+      "image_b": str(images[1]),
+      "result": "A>B",
+    }]
+    versus_mobile.write_state(store.folder, history)
+
+    def fail_resolve(self, *args, **kwargs):
+      raise AssertionError(f"resolve called for {self}")
+
+    with patch.object(versus_mobile.Path, "resolve", fail_resolve):
+      rows = versus_mobile.read_history(store)
+
+    self.assertEqual(rows, history)
+
+  def test_noncanonical_paths_resolve_into_catalog_keys(self) -> None:
+    store, written, _workdir, _catalog = self.open_workspace({"alpha": 2})
+    images = written["alpha"]
+    indirect = images[0].parent / ".." / images[0].parent.name / images[0].name
+    self.assertNotEqual(str(indirect), str(images[0]))
+    self.assertNotIn(str(indirect), store.known_images)
+    original = versus_mobile.Path.resolve
+    calls: list[str] = []
+
+    def tracking_resolve(self, *args, **kwargs):
+      calls.append(str(self))
+      return original(self, *args, **kwargs)
+
+    history = [{
+      "action": "comparison",
+      "image_a": str(indirect),
+      "image_b": str(images[1]),
+      "result": "A>B",
+    }]
+    versus_mobile.write_state(store.folder, history)
+    with patch.object(versus_mobile.Path, "resolve", tracking_resolve):
+      rows = versus_mobile.read_history(store)
+
+    self.assertEqual(calls, [str(indirect)])
+    self.assertEqual(rows, [{
+      "action": "comparison",
+      "image_a": str(images[0]),
+      "image_b": str(images[1]),
+      "result": "A>B",
+    }])
+
+    with (store.folder / "comparisons.csv").open("w", encoding="utf-8", newline="") as csv_file:
+      writer = csv.DictWriter(csv_file, fieldnames=("image_a", "image_b", "result"))
+      writer.writeheader()
+      writer.writerow({"image_a": str(indirect), "image_b": str(images[1]), "result": "A>B"})
+    calls.clear()
+    with patch.object(versus_mobile.Path, "resolve", tracking_resolve):
+      legacy = versus_mobile.read_legacy_comparisons(store.folder, store.known_images)
+
+    self.assertEqual(calls, [str(indirect)])
+    self.assertEqual(legacy, [{"image_a": str(images[0]), "image_b": str(images[1]), "result": "A>B"}])
+
   def test_discover_dated_images_checks_only_selected_directory(self) -> None:
     with TemporaryDirectory() as directory:
       root = Path(directory)
